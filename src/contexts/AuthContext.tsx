@@ -13,69 +13,33 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
   const [user, setUser] = useState<User | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [authError, setAuthError] = useState<string | undefined>(undefined);
-  const [userFetched, setUserFetched] = useState(false);
+  const [isInitialized, setIsInitialized] = useState(false);
 
   // Função para checar se o token está válido
   const checkTokenValid = async () => {
-    const { data, error } = await supabase.auth.getSession();
-    if (error || !data.session) {
-      setAuthError('Sessão expirada. Faça login novamente.');
-      setUser(null);
-      setIsLoading(false);
-      setAuthError(undefined);
+    try {
+      const { data, error } = await supabase.auth.getSession();
+      if (error || !data.session) {
+        return false;
+      }
+      return true;
+    } catch (error) {
+      console.error('Erro ao verificar sessão:', error);
       return false;
     }
-    return true;
   };
 
-  useEffect(() => {
-    // Ao inicializar, tente restaurar a sessão com timeout de 8s
-    let didTimeout = false;
-    const timeout = setTimeout(() => {
-      didTimeout = true;
-      setIsLoading(false);
-      setUser(null);
-      setAuthError('Tempo de autenticação excedido. Faça login novamente.');
-    }, 8000);
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      if (didTimeout) return;
-      clearTimeout(timeout);
-      if (session?.user && !userFetched) {
-        fetchUser(session.user);
-        setUserFetched(true);
-      } else {
-        setIsLoading(false);
-        setUser(null); // Garante que user seja null se não houver sessão
-        setAuthError(undefined);
-      }
-    }).catch(() => {
-      if (didTimeout) return;
-      clearTimeout(timeout);
-      setIsLoading(false);
-      setUser(null);
-      setAuthError(undefined);
-    });
-
-    // Listen for auth changes
-    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
-      if (session?.user && !userFetched) {
-        await fetchUser(session.user);
-        setUserFetched(true);
-      } else if (event === 'SIGNED_OUT') {
+  const fetchUser = async (supabaseUser: SupabaseUser) => {
+    try {
+      const isValid = await checkTokenValid();
+      if (!isValid) {
         setUser(null);
         setIsLoading(false);
         setAuthError(undefined);
+        return;
       }
-    });
 
-    return () => subscription.unsubscribe();
-  }, [userFetched]);
-
-  const fetchUser = async (supabaseUser: SupabaseUser) => {
-    const isValid = await checkTokenValid();
-    if (!isValid) return;
-    try {
-      const { data: user, error } = await supabase
+      const { data: userData, error } = await supabase
         .from('users')
         .select('*')
         .eq('id', supabaseUser.id)
@@ -83,32 +47,104 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
 
       if (error) {
         console.error('Error fetching user:', error);
-        setAuthError('Erro ao buscar usuário. Faça login novamente.');
-        setIsLoading(false);
         setUser(null);
+        setIsLoading(false);
         setAuthError(undefined);
         return;
       }
 
-      if (user) {
+      if (userData) {
         setUser({
-          id: user.id,
-          name: user.name,
-          email: user.email,
-          roles: user.roles,
-          avatar: user.avatar_url
+          id: userData.id,
+          name: userData.name,
+          email: userData.email,
+          roles: userData.roles,
+          avatar: userData.avatar_url
         });
         setAuthError(undefined);
       }
     } catch (error) {
       console.error('Error in fetchUser:', error);
-      setAuthError('Erro de autenticação. Faça login novamente.');
       setUser(null);
       setAuthError(undefined);
     } finally {
       setIsLoading(false);
+      setIsInitialized(true);
     }
   };
+
+  useEffect(() => {
+    let mounted = true;
+    let subscription: { unsubscribe: () => void } | null = null;
+
+    // Função para inicializar a sessão
+    const initializeSession = async () => {
+      try {
+        // Primeiro, tenta obter a sessão atual
+        const { data: { session }, error } = await supabase.auth.getSession();
+        
+        if (!mounted) return;
+
+        if (error) {
+          console.error('Erro ao obter sessão:', error);
+          setIsLoading(false);
+          setUser(null);
+          setIsInitialized(true);
+          return;
+        }
+
+        if (session?.user) {
+          await fetchUser(session.user);
+        } else {
+          setIsLoading(false);
+          setUser(null);
+          setIsInitialized(true);
+        }
+      } catch (error) {
+        console.error('Erro ao inicializar sessão:', error);
+        if (mounted) {
+          setIsLoading(false);
+          setUser(null);
+          setIsInitialized(true);
+        }
+      }
+    };
+
+    // Inicializa a sessão
+    initializeSession();
+
+    // Listen for auth changes
+    subscription = supabase.auth.onAuthStateChange(async (event, session) => {
+      if (!mounted) return;
+
+      if (event === 'SIGNED_IN' && session?.user) {
+        await fetchUser(session.user);
+      } else if (event === 'SIGNED_OUT') {
+        setUser(null);
+        setIsLoading(false);
+        setAuthError(undefined);
+        setIsInitialized(true);
+      } else if (event === 'TOKEN_REFRESHED' && session?.user) {
+        // Se o token foi atualizado, verifica se precisa atualizar o usuário
+        // Isso é importante para manter a sessão ativa após refresh da página
+        setUser(prevUser => {
+          if (!prevUser) {
+            // Se não temos usuário mas temos sessão, busca
+            fetchUser(session.user);
+          }
+          return prevUser;
+        });
+      }
+    });
+
+    return () => {
+      mounted = false;
+      if (subscription) {
+        subscription.unsubscribe();
+      }
+    };
+  }, []);
+
 
   const login = async (email: string, password: string): Promise<boolean> => {
     setIsLoading(true);
@@ -171,11 +207,26 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
   };
 
   const logout = async () => {
-    await supabase.auth.signOut();
-    setUser(null);
-    setAuthError(undefined);
-    setUserFetched(false);
-    setIsLoading(false);
+    try {
+      await supabase.auth.signOut();
+      setUser(null);
+      setAuthError(undefined);
+      setIsInitialized(false);
+      setIsLoading(false);
+      // Limpa o localStorage relacionado ao Supabase
+      Object.keys(localStorage).forEach(key => {
+        if (key.startsWith('sb-')) {
+          localStorage.removeItem(key);
+        }
+      });
+    } catch (error) {
+      console.error('Erro ao fazer logout:', error);
+      // Mesmo com erro, limpa o estado local
+      setUser(null);
+      setAuthError(undefined);
+      setIsInitialized(false);
+      setIsLoading(false);
+    }
   };
 
   const resetPassword = async (email: string): Promise<boolean> => {

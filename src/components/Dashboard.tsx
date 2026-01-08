@@ -6,7 +6,8 @@ import {
   TrendingUp,
   Users,
   FolderOpen,
-  Plus
+  Plus,
+  XCircle
 } from 'lucide-react';
 import { useProjectsContext } from '../contexts/ProjectsContext';
 import { useAuth } from '../contexts/AuthContext';
@@ -31,6 +32,7 @@ const Dashboard: React.FC = () => {
   const [viewMode, setViewMode] = useState<ViewMode>(ViewMode.Month);
   const [tooltipProjectId, setTooltipProjectId] = useState<string | null>(null);
   const [collapsedProjects, setCollapsedProjects] = useState<string[]>(() => projects.map(p => String(p.id)));
+  const [selectedStatusFilter, setSelectedStatusFilter] = useState<string | null>(null);
   
   let userTasks = getUserTasks();
   if (user?.roles?.includes('admin') || user?.roles?.includes('manager')) {
@@ -92,69 +94,99 @@ const Dashboard: React.FC = () => {
 
   // Função para converter projetos e tarefas para o formato do Gantt
   const getGanttTasks = () => {
-    let filteredProjects = projects;
-    if (selectedGanttProject !== 'all') {
-      filteredProjects = projects.filter(p => String(p.id) === selectedGanttProject);
-    }
-    const tasks: any[] = [];
-    // Mapa de títulos de tarefas para lookup rápido
-    const taskTitles = new Map<string, string>();
-    filteredProjects.forEach(project => {
-      project.stages.forEach(stage => {
-        stage.tasks.forEach(task => {
-          taskTitles.set(task.id, task.title);
-        });
-      });
-    });
-    filteredProjects.forEach(project => {
-      // Projeto como grupo
-      const dueDates = project.stages.flatMap(s =>
-        s.tasks
-          .filter((t: any) => t.dueDate && !isNaN(new Date(t.dueDate ? t.dueDate : '').getTime()))
-          .map((t: any) => new Date(t.dueDate ? t.dueDate : '').getTime())
-      );
-      const end = dueDates.length > 0 ? new Date(Math.max(...dueDates)) : (project.createdAt ? new Date(project.createdAt) : new Date());
-      tasks.push({
-        id: project.id,
-        name: project.name,
-        start: project.createdAt ? new Date(project.createdAt) : new Date(),
-        end,
-        startLabel: format(project.createdAt ? new Date(project.createdAt) : new Date(), 'dd-MM-yy'),
-        endLabel: format(end, 'dd-MM-yy'),
-        type: 'project',
-        progress: 0,
-        isDisabled: true,
-        hideChildren: collapsedProjects.includes(project.id),
-        styles: { progressColor: '#2563eb', progressSelectedColor: '#1d4ed8' }
-      });
-      // Tarefas
-      project.stages.forEach(stage => {
-        stage.tasks.forEach(task => {
-          if (!task.startDate || !task.dueDate) return;
-          const start = new Date(task.startDate);
-          const end = new Date(task.dueDate);
-          if (isNaN(start.getTime()) || isNaN(end.getTime())) return;
-          tasks.push({
-            id: task.id,
-            name: task.title,
-            start: task.startDate ? new Date(task.startDate) : new Date(),
-            end: task.dueDate ? new Date(task.dueDate) : new Date(),
-            startLabel: format(task.startDate ? new Date(task.startDate) : new Date(), 'dd-MM-yy'),
-            endLabel: format(task.dueDate ? new Date(task.dueDate) : new Date(), 'dd-MM-yy'),
-            type: 'task',
-            project: project.id,
-            progress: task.status === 'completed' ? 100 : 0,
-            parentTaskTitle: task.parentTaskId ? taskTitles.get(task.parentTaskId) || '' : undefined,
-            parentTaskId: task.parentTaskId || undefined,
-            styles: {
-              progressColor: task.status === 'completed' ? '#22c55e' : (task.status === 'in-progress' ? '#2563eb' : '#facc15'),
-              progressSelectedColor: task.status === 'completed' ? '#16a34a' : (task.status === 'in-progress' ? '#1d4ed8' : '#ca8a04')
+    try {
+      let filteredProjects = projects || [];
+      if (selectedGanttProject !== 'all') {
+        filteredProjects = filteredProjects.filter(p => String(p.id) === selectedGanttProject);
+      }
+      const tasks: any[] = [];
+      // Mapa de títulos de tarefas para lookup rápido
+      const taskTitles = new Map<string, string>();
+      filteredProjects.forEach(project => {
+        if (!project || !project.stages) return;
+        project.stages.forEach(stage => {
+          if (!stage || !stage.tasks) return;
+          stage.tasks.forEach(task => {
+            if (task && task.id && task.title) {
+              taskTitles.set(task.id, task.title);
             }
           });
         });
       });
-    });
-    return tasks;
+      filteredProjects.forEach(project => {
+        if (!project) return;
+        // Projeto como grupo
+        const dueDates = (project.stages || []).flatMap(s => {
+          if (!s || !s.tasks) return [];
+          return s.tasks
+            .filter((t: any) => t && t.dueDate && !isNaN(new Date(t.dueDate).getTime()))
+            .map((t: any) => new Date(t.dueDate).getTime());
+        });
+        const projectStart = project.createdAt ? new Date(project.createdAt) : new Date();
+        const projectEnd = dueDates.length > 0 ? new Date(Math.max(...dueDates)) : new Date(projectStart.getTime() + 7 * 24 * 60 * 60 * 1000); // +7 dias se não houver dueDate
+        
+        // Validação final antes de adicionar
+        if (!isNaN(projectStart.getTime()) && !isNaN(projectEnd.getTime())) {
+          tasks.push({
+            id: project.id,
+            name: project.name || 'Projeto sem nome',
+            start: projectStart,
+            end: projectEnd,
+            startLabel: format(projectStart, 'dd-MM-yy'),
+            endLabel: format(projectEnd, 'dd-MM-yy'),
+            type: 'project',
+            progress: 0,
+            isDisabled: true,
+            hideChildren: collapsedProjects.includes(String(project.id)),
+            styles: { progressColor: '#2563eb', progressSelectedColor: '#1d4ed8' }
+          });
+        }
+        
+        // Tarefas
+        (project.stages || []).forEach(stage => {
+          if (!stage || !stage.tasks) return;
+          stage.tasks.forEach(task => {
+            if (!task) return;
+            // Validação mais rigorosa
+            if (!task.startDate || !task.dueDate) return;
+            
+            const start = new Date(task.startDate);
+            const end = new Date(task.dueDate);
+            
+            // Validação de datas válidas
+            if (isNaN(start.getTime()) || isNaN(end.getTime())) return;
+            
+            // Garantir que start <= end
+            if (start > end) return;
+            
+            // Validação final antes de adicionar
+            if (task.id && task.title) {
+              tasks.push({
+                id: task.id,
+                name: task.title,
+                start: start,
+                end: end,
+                startLabel: format(start, 'dd-MM-yy'),
+                endLabel: format(end, 'dd-MM-yy'),
+                type: 'task',
+                project: project.id,
+                progress: task.status === 'completed' ? 100 : 0,
+                parentTaskTitle: task.parentTaskId ? taskTitles.get(task.parentTaskId) || '' : undefined,
+                parentTaskId: task.parentTaskId || undefined,
+                styles: {
+                  progressColor: task.status === 'completed' ? '#22c55e' : (task.status === 'in-progress' ? '#2563eb' : '#facc15'),
+                  progressSelectedColor: task.status === 'completed' ? '#16a34a' : (task.status === 'in-progress' ? '#1d4ed8' : '#ca8a04')
+                }
+              });
+            }
+          });
+        });
+      });
+      return tasks;
+    } catch (error) {
+      console.error('Erro ao gerar tarefas do Gantt:', error);
+      return [];
+    }
   };
 
   // Função para atribuir valor numérico à prioridade
@@ -196,6 +228,28 @@ const Dashboard: React.FC = () => {
   useEffect(() => {
     setCollapsedProjects(projects.map(p => String(p.id)));
   }, [projects, selectedGanttProject]);
+
+  // Atualizar o projeto selecionado quando os projetos forem atualizados (para atualizar o modal)
+  useEffect(() => {
+    if (selectedProject) {
+      const updatedProject = projects.find(p => p.id === selectedProject.id);
+      if (updatedProject) {
+        setSelectedProject(updatedProject);
+      }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [projects]);
+
+  // Filtrar tarefas por status
+  const getTasksByStatus = (status: string) => {
+    return userTasks.filter(task => task.status === status);
+  };
+
+  const handleStatusClick = (status: string) => {
+    setSelectedStatusFilter(status);
+  };
+
+  const filteredTasksByStatus = selectedStatusFilter ? getTasksByStatus(selectedStatusFilter) : [];
 
   if (isLoading) {
     return (
@@ -283,19 +337,31 @@ const Dashboard: React.FC = () => {
         <div className="bg-white rounded-xl p-6 shadow-sm border border-gray-200 lg:col-span-1">
           <h3 className="text-lg font-semibold text-gray-900 mb-4">Distribuição de Tarefas</h3>
           <div className="space-y-3">
-            <div className="flex justify-between items-center">
+            <div 
+              className="flex justify-between items-center cursor-pointer hover:bg-gray-50 p-2 rounded-lg transition-colors"
+              onClick={() => handleStatusClick('pending')}
+            >
               <span className="text-gray-600">Pendentes</span>
               <span className="font-semibold text-gray-900">{stats.pendingTasks}</span>
             </div>
-            <div className="flex justify-between items-center">
+            <div 
+              className="flex justify-between items-center cursor-pointer hover:bg-gray-50 p-2 rounded-lg transition-colors"
+              onClick={() => handleStatusClick('in-progress')}
+            >
               <span className="text-gray-600">Em Andamento</span>
               <span className="font-semibold text-blue-600">{stats.inProgressTasks}</span>
             </div>
-            <div className="flex justify-between items-center">
+            <div 
+              className="flex justify-between items-center cursor-pointer hover:bg-gray-50 p-2 rounded-lg transition-colors"
+              onClick={() => handleStatusClick('waiting-approval')}
+            >
               <span className="text-gray-600">Aguardando Aprovação</span>
               <span className="font-semibold text-yellow-600">{stats.waitingApproval}</span>
             </div>
-            <div className="flex justify-between items-center">
+            <div 
+              className="flex justify-between items-center cursor-pointer hover:bg-gray-50 p-2 rounded-lg transition-colors"
+              onClick={() => handleStatusClick('completed')}
+            >
               <span className="text-gray-600">Concluídas</span>
               <span className="font-semibold text-green-600">{stats.completedTasks}</span>
             </div>
@@ -384,55 +450,102 @@ const Dashboard: React.FC = () => {
       <div className="bg-white rounded-xl p-2 sm:p-4 md:p-6 shadow-sm border border-gray-200 mb-6">
         <div className="overflow-x-auto" style={{ maxWidth: '100vw', WebkitOverflowScrolling: 'touch' }}>
           <div className="min-w-[900px]">
-          <Gantt
-            tasks={getGanttTasks()}
-            viewMode={viewMode}
-              listCellWidth={window.innerWidth < 640 ? "90px" : window.innerWidth < 1024 ? "120px" : "155px"}
-            locale="pt-BR"
-            barFill={60}
-            fontSize={14}
-            rowHeight={38}
-            columnWidth={
-                viewMode === ViewMode.Day ? (window.innerWidth < 640 ? 40 : 80) :
-                viewMode === ViewMode.Week ? (window.innerWidth < 640 ? 30 : 60) :
-                viewMode === ViewMode.Month ? (window.innerWidth < 640 ? 40 : 80) :
-                viewMode === ViewMode.Year ? (window.innerWidth < 640 ? 60 : 100) : 60
-            }
-            listColumns={[
-              {
-                title: "Nome",
-                field: "name",
-                width: window.innerWidth < 640 ? '90' : window.innerWidth < 1024 ? '120' : '180',
-                render: (task: any) => (
-                  <span style={{ fontWeight: task.type === 'project' ? 'bold' : 'normal', wordBreak: 'break-word', maxWidth: '100%' }}>
-                    {task.name}
-                  </span>
-                )
-              },
-              {
-                title: "From",
-                field: "start",
-                width: window.innerWidth < 640 ? '80' : '155',
-                render: (task: any) => format(task.start, 'dd/MM/yyyy', { locale: ptBR })
-              },
-              {
-                title: "To",
-                field: "end",
-                width: window.innerWidth < 640 ? '80' : '155',
-                render: (task: any) => format(task.end, 'dd/MM/yyyy', { locale: ptBR })
+          {(() => {
+            try {
+              const ganttTasks = getGanttTasks();
+              if (!Array.isArray(ganttTasks) || ganttTasks.length === 0) {
+                return (
+                  <div className="text-center py-12 text-gray-500">
+                    Nenhuma tarefa com datas válidas para exibir no gráfico Gantt.
+                  </div>
+                );
               }
-            ]}
-            todayColor="#2563eb22"
-              onExpanderClick={task => {
-                if (task.type === 'project') {
-                  setCollapsedProjects(prev =>
-                    prev.includes(task.id)
-                      ? prev.filter(id => id !== task.id)
-                      : [...prev, task.id]
-                  );
-                }
-              }}
-          />
+              
+              // Validação final: filtrar tarefas inválidas e garantir que todas têm start e end
+              const validTasks = ganttTasks
+                .filter(task => {
+                  if (!task || !task.id || !task.name) return false;
+                  // Verificar se start e end existem e são válidos
+                  const hasStart = task.start !== null && task.start !== undefined;
+                  const hasEnd = task.end !== null && task.end !== undefined;
+                  if (!hasStart || !hasEnd) return false;
+                  
+                  // Tentar converter para Date e validar
+                  try {
+                    const startDate = task.start instanceof Date ? task.start : new Date(task.start);
+                    const endDate = task.end instanceof Date ? task.end : new Date(task.end);
+                    return !isNaN(startDate.getTime()) && !isNaN(endDate.getTime());
+                  } catch {
+                    return false;
+                  }
+                })
+                .map(task => {
+                  // Garantir que start e end são objetos Date válidos
+                  const startDate = task.start instanceof Date ? task.start : new Date(task.start);
+                  const endDate = task.end instanceof Date ? task.end : new Date(task.end);
+                  
+                  // Validar que as datas são válidas
+                  if (isNaN(startDate.getTime()) || isNaN(endDate.getTime())) {
+                    // Se as datas são inválidas, usar datas padrão
+                    return {
+                      ...task,
+                      start: new Date(),
+                      end: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000) // +7 dias
+                    };
+                  }
+                  
+                  return {
+                    ...task,
+                    start: startDate,
+                    end: endDate
+                  };
+                });
+              
+              // Se não houver tarefas válidas, não renderiza o Gantt
+              if (validTasks.length === 0) {
+                return (
+                  <div className="text-center py-12 text-gray-500">
+                    Nenhuma tarefa com datas válidas para exibir no gráfico Gantt.
+                  </div>
+                );
+              }
+              
+              return (
+                <Gantt
+                  tasks={validTasks}
+                  viewMode={viewMode}
+                  listCellWidth={window.innerWidth < 640 ? "90px" : window.innerWidth < 1024 ? "120px" : "155px"}
+                  locale="pt-BR"
+                  barFill={60}
+                  fontSize={14 as any}
+                  rowHeight={38}
+                  columnWidth={
+                    viewMode === ViewMode.Day ? (window.innerWidth < 640 ? 40 : 80) :
+                    viewMode === ViewMode.Week ? (window.innerWidth < 640 ? 30 : 60) :
+                    viewMode === ViewMode.Month ? (window.innerWidth < 640 ? 40 : 80) :
+                    viewMode === ViewMode.Year ? (window.innerWidth < 640 ? 60 : 100) : 60
+                  }
+                  todayColor="#2563eb22"
+                  onExpanderClick={task => {
+                    if (task && task.type === 'project') {
+                      setCollapsedProjects(prev =>
+                        prev.includes(task.id)
+                          ? prev.filter(id => id !== task.id)
+                          : [...prev, task.id]
+                      );
+                    }
+                  }}
+                />
+              );
+            } catch (error) {
+              console.error('Erro ao renderizar Gantt:', error);
+              return (
+                <div className="text-center py-12 text-red-500">
+                  Erro ao carregar gráfico Gantt. Por favor, recarregue a página.
+                </div>
+              );
+            }
+          })()}
           </div>
           </div>
       </div>
@@ -469,6 +582,99 @@ const Dashboard: React.FC = () => {
         projects={projects}
         users={users}
       />
+
+      {/* Modal de Tarefas por Status */}
+      {selectedStatusFilter && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-xl shadow-xl max-w-4xl w-full max-h-[90vh] overflow-hidden flex flex-col">
+            <div className="p-6 border-b border-gray-200 flex items-center justify-between">
+              <div>
+                <h2 className="text-2xl font-bold text-gray-900">
+                  {selectedStatusFilter === 'pending' && 'Tarefas Pendentes'}
+                  {selectedStatusFilter === 'in-progress' && 'Tarefas em Andamento'}
+                  {selectedStatusFilter === 'waiting-approval' && 'Tarefas Aguardando Aprovação'}
+                  {selectedStatusFilter === 'completed' && 'Tarefas Concluídas'}
+                </h2>
+                <p className="text-sm text-gray-500 mt-1">
+                  {filteredTasksByStatus.length} tarefa(s) encontrada(s)
+                </p>
+              </div>
+              <button
+                onClick={() => setSelectedStatusFilter(null)}
+                className="text-gray-400 hover:text-gray-600 transition-colors"
+              >
+                <XCircle className="w-6 h-6" />
+              </button>
+            </div>
+            <div className="flex-1 overflow-y-auto p-6">
+              {filteredTasksByStatus.length > 0 ? (
+                <div className="space-y-4">
+                  {filteredTasksByStatus.map(task => (
+                    <div key={task.id} className="bg-gray-50 rounded-lg p-4 border border-gray-200">
+                      <TaskCard
+                        task={task}
+                        showProject={true}
+                        onStatusChange={updateTaskStatus}
+                        users={users}
+                      />
+                      {/* Botões de ação rápida */}
+                      <div className="mt-4 pt-4 border-t border-gray-200 flex justify-end gap-2">
+                        {task.status === 'pending' && (
+                          <button
+                            onClick={async () => {
+                              await updateTaskStatus(task.id, 'in-progress');
+                              await fetchProjects();
+                            }}
+                            className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors text-sm font-medium shadow-sm flex items-center gap-2"
+                            title="Iniciar tarefa"
+                          >
+                            <TrendingUp className="w-4 h-4" />
+                            Iniciar
+                          </button>
+                        )}
+                        {task.status === 'in-progress' && (
+                          <button
+                            onClick={async () => {
+                              await updateTaskStatus(task.id, 'completed');
+                              await fetchProjects();
+                            }}
+                            className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors text-sm font-medium shadow-sm flex items-center gap-2"
+                            title="Concluir tarefa"
+                          >
+                            <CheckSquare className="w-4 h-4" />
+                            Concluir
+                          </button>
+                        )}
+                        {task.status === 'approved' && (
+                          <button
+                            onClick={async () => {
+                              await updateTaskStatus(task.id, 'completed');
+                              await fetchProjects();
+                            }}
+                            className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors text-sm font-medium shadow-sm flex items-center gap-2"
+                            title="Concluir tarefa"
+                          >
+                            <CheckSquare className="w-4 h-4" />
+                            Concluir
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="text-center py-12">
+                  <CheckSquare className="w-16 h-16 text-gray-300 mx-auto mb-4" />
+                  <h3 className="text-lg font-semibold text-gray-900 mb-2">Nenhuma tarefa encontrada</h3>
+                  <p className="text-gray-600">
+                    Não há tarefas com este status no momento.
+                  </p>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

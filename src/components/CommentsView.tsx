@@ -133,14 +133,35 @@ const CommentsThread: React.FC<CommentsThreadProps> = ({ taskId: propTaskId, tas
           .or(`created_by.eq.${user.id},assigned_to.eq.${user.id}`);
         myTaskIds = (myTasks || []).map(t => t.id).filter(Boolean);
       }
+      
+      // NOVA LÓGICA: Buscar tarefas onde o usuário foi mencionado em algum comentário
+      // Quando um usuário é mencionado em um comentário de uma tarefa, ele deve poder ver
+      // TODOS os comentários daquela tarefa, não apenas o comentário onde foi mencionado
+      let mentionedTaskIds: string[] = [];
+      if (user && typeof user.id === 'string') {
+        const { data: mentionedComments } = await supabase
+          .from('task_comments')
+          .select('task_id')
+          .eq('mentioned_user_id', user.id);
+        if (mentionedComments) {
+          // Extrair IDs únicos das tarefas onde o usuário foi mencionado
+          mentionedTaskIds = Array.from(new Set(mentionedComments.map(c => c.task_id).filter(Boolean)));
+        }
+      }
+      
+      // Combinar todas as tarefas relevantes:
+      // - Tarefas criadas/atribuídas ao usuário
+      // - Tarefas onde o usuário foi mencionado em algum comentário
+      const allRelevantTaskIds = Array.from(new Set([...myTaskIds, ...mentionedTaskIds]));
+      
       // Buscar comentários onde:
-      // - o usuário é autor
-      // - o usuário é mencionado
-      // - a tarefa foi criada pelo usuário
-      // - a tarefa está atribuída ao usuário
+      // - o usuário é autor (seus próprios comentários)
+      // - o usuário é mencionado diretamente (comentário específico que o menciona)
+      // - a tarefa está na lista de tarefas relevantes (incluindo tarefas onde foi mencionado)
+      //   Isso garante que quando mencionado em uma tarefa, o usuário vê TODOS os comentários daquela tarefa
       let orQuery = `author_id.eq.${user.id},mentioned_user_id.eq.${user.id}`;
-      if (myTaskIds.length > 0) {
-        orQuery += `,task_id.in.(${myTaskIds.join(',')})`;
+      if (allRelevantTaskIds.length > 0) {
+        orQuery += `,task_id.in.(${allRelevantTaskIds.join(',')})`;
       }
       const { data: dbComments, error: commentsError } = await supabase
         .from('task_comments')

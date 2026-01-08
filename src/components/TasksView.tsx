@@ -349,8 +349,8 @@ const TasksView: React.FC<TasksViewProps> = ({ initialUserFilter }) => {
             <div className="bg-white rounded-xl shadow-sm border border-gray-300 p-2 sm:p-4">
               <div className="p-4 border-b border-gray-100 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
                 <div>
-                  <h3 className="text-lg font-bold text-gray-700">Outras Tarefas</h3>
-                  <span className="text-sm text-gray-600 font-semibold">{outrasTarefas.length} tarefa(s)</span>
+                <h3 className="text-lg font-bold text-gray-700">Outras Tarefas</h3>
+                <span className="text-sm text-gray-600 font-semibold">{outrasTarefas.length} tarefa(s)</span>
                 </div>
                 <div className="flex items-center gap-2">
                   <label className="text-xs font-medium">Ordenar por:</label>

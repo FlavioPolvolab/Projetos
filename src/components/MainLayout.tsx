@@ -2,7 +2,6 @@ import React, { useState } from 'react';
 import Sidebar from './Sidebar';
 import SettingsView from './SettingsView';
 import CommentsView from './CommentsView';
-import DivulgacaoView from './DivulgacaoView';
 import FlowView from './FlowView';
 import { useAuth } from '../contexts/AuthContext';
 
@@ -33,8 +32,6 @@ const MainLayout: React.FC<MainLayoutProps> = ({ activeTab, setActiveTab, childr
           <SettingsView />
         ) : activeTab === 'comments' ? (
           <CommentsView />
-        ) : activeTab === 'divulgacao' ? (
-          <DivulgacaoView />
         ) : activeTab === 'flow' ? (
           <FlowView />
         ) : (

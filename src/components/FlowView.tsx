@@ -138,9 +138,9 @@ const FlowView: React.FC = () => {
     } else {
       // Criar
       const { data, error } = await supabase.from('flow_tasks').insert({
-        user_id: user?.id,
-        title: newTitle,
-        description: newDesc,
+      user_id: user?.id,
+      title: newTitle,
+      description: newDesc,
         status: 'pending',
         start_date: newStartDate || null,
         due_date: newDueDate || null,
@@ -230,8 +230,8 @@ const FlowView: React.FC = () => {
           </div>
           <button onClick={handleOpenModal} className="flex items-center px-5 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 text-base font-semibold shadow">
             <Plus className="w-5 h-5 mr-2" /> Nova Tarefa
-          </button>
-        </div>
+        </button>
+      </div>
         {/* Filtros + busca juntos, agora abaixo dos contadores */}
         <div className="flex flex-wrap gap-4 mb-6 items-end">
           <div>
@@ -254,7 +254,7 @@ const FlowView: React.FC = () => {
             <label className="block text-xs font-semibold mb-1">Data Inicial</label>
             <input type="date" value={dateFilterStart} onChange={e => setDateFilterStart(e.target.value)} className="border rounded px-2 py-1 min-w-[140px]" />
           </div>
-          <div>
+                <div>
             <label className="block text-xs font-semibold mb-1">Data Final</label>
             <input type="date" value={dateFilterEnd} onChange={e => setDateFilterEnd(e.target.value)} className="border rounded px-2 py-1 min-w-[140px]" />
           </div>
@@ -276,7 +276,7 @@ const FlowView: React.FC = () => {
           <div className="border border-gray-200 bg-white rounded-xl mb-6 p-0 shadow-sm overflow-hidden">
             <div className="font-bold text-gray-700 px-6 pt-4 pb-2 bg-gray-50">Outras Tarefas <span className="font-normal">({outras.length} tarefa(s))</span></div>
             <TaskTable tasks={outras} onEdit={handleEdit} onDelete={handleDelete} onToggle={toggleComplete} />
-          </div>
+                </div>
         )}
         {concluidas.length > 0 && (
           <>
@@ -291,28 +291,28 @@ const FlowView: React.FC = () => {
                 <div className="font-bold text-green-800 px-6 pt-4 pb-2 bg-green-50">Tarefas Concluídas <span className="font-normal">({concluidas.length} tarefa(s))</span></div>
                 <TaskTable tasks={concluidas} onEdit={handleEdit} onDelete={handleDelete} onToggle={toggleComplete} showComplete />
               </div>
-            )}
+              )}
           </>
-        )}
+      )}
         {/* Modal de criação/edição */}
-        {showModal && (
-          <div className="fixed inset-0 bg-black bg-opacity-40 flex items-center justify-center z-50">
+      {showModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-40 flex items-center justify-center z-50">
             <form onSubmit={handleCreateOrEdit} className="bg-white rounded-xl shadow-xl p-8 w-full max-w-md flex flex-col gap-4 border">
               <h3 className="text-xl font-bold mb-2">{editingTask ? 'Editar Tarefa' : 'Nova Tarefa Diária'}</h3>
-              <input
-                type="text"
-                value={newTitle}
-                onChange={e => setNewTitle(e.target.value)}
-                placeholder="Título da tarefa"
-                className="px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                required
-              />
-              <textarea
-                value={newDesc}
-                onChange={e => setNewDesc(e.target.value)}
-                placeholder="Descrição (opcional)"
-                className="px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent min-h-[60px]"
-              />
+            <input
+              type="text"
+              value={newTitle}
+              onChange={e => setNewTitle(e.target.value)}
+              placeholder="Título da tarefa"
+              className="px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+              required
+            />
+            <textarea
+              value={newDesc}
+              onChange={e => setNewDesc(e.target.value)}
+              placeholder="Descrição (opcional)"
+              className="px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent min-h-[60px]"
+            />
               <div className="flex gap-2">
                 <div className="flex-1">
                   <label className="block text-xs font-semibold mb-1">Data Inicial</label>
@@ -327,13 +327,13 @@ const FlowView: React.FC = () => {
                 <input type="checkbox" id="isPriority" checked={isPriority} onChange={e => setIsPriority(e.target.checked)} />
                 <label htmlFor="isPriority" className="text-sm">Tarefa prioritária</label>
               </div>
-              <div className="flex gap-2 justify-end mt-2">
+            <div className="flex gap-2 justify-end mt-2">
                 <button type="button" onClick={() => { setShowModal(false); setEditingTask(null); }} className="px-4 py-2 bg-gray-200 rounded-lg">Cancelar</button>
-                <button type="submit" className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700">Salvar</button>
-              </div>
-            </form>
-          </div>
-        )}
+              <button type="submit" className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700">Salvar</button>
+            </div>
+          </form>
+        </div>
+      )}
       </div>
     </div>
   );

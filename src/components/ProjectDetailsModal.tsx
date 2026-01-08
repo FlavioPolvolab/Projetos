@@ -53,13 +53,21 @@ const ProjectDetailsModal: React.FC<ProjectDetailsModalProps> = ({ isOpen, proje
   const [showTaskModal, setShowTaskModal] = React.useState(false);
   const [modalTask, setModalTask] = React.useState<any>(null);
   const [sort, setSort] = React.useState<{ field: 'dueDate' | 'stageName', direction: 'asc' | 'desc' }>({ field: 'dueDate', direction: 'asc' });
+  const [statusFilter, setStatusFilter] = React.useState<string>('all');
 
   if (!isOpen || !project) return null;
 
   // Junta todas as tarefas do projeto em um array único
-  let allTasks = (project.stages || []).flatMap((stage: any) =>
+  const allTasksUnfiltered = (project.stages || []).flatMap((stage: any) =>
     (stage.tasks || []).map((task: any) => ({ ...task, stageName: stage.name, responsible: users?.find(u => u.id === task.assignedTo) }))
   );
+  
+  // Filtro por status
+  let allTasks = allTasksUnfiltered;
+  if (statusFilter !== 'all') {
+    allTasks = allTasks.filter((task: any) => task.status === statusFilter);
+  }
+  
   // Ordenação dinâmica
   allTasks = allTasks.slice().sort((a: any, b: any) => {
     if (sort.field === 'dueDate') {
@@ -94,7 +102,31 @@ const ProjectDetailsModal: React.FC<ProjectDetailsModalProps> = ({ isOpen, proje
             <p className="text-gray-800 text-sm">{project.description}</p>
           </div>
           <div>
-            <h3 className="text-md font-semibold text-gray-700 mb-1">Tarefas</h3>
+            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 mb-3">
+              <div>
+                <h3 className="text-md font-semibold text-gray-700">Tarefas</h3>
+                <p className="text-xs text-gray-500 mt-0.5">
+                  {allTasks.length} de {allTasksUnfiltered.length} tarefa(s)
+                  {statusFilter !== 'all' && ` (filtrado por status)`}
+                </p>
+              </div>
+              <div className="flex items-center gap-2">
+                <label className="text-xs font-medium text-gray-600">Filtrar por status:</label>
+                <select
+                  value={statusFilter}
+                  onChange={(e) => setStatusFilter(e.target.value)}
+                  className="px-3 py-1.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm"
+                >
+                  <option value="all">Todos</option>
+                  <option value="pending">Pendentes</option>
+                  <option value="in-progress">Em Andamento</option>
+                  <option value="waiting-approval">Aguardando Aprovação</option>
+                  <option value="approved">Aprovadas</option>
+                  <option value="completed">Concluídas</option>
+                  <option value="rejected">Rejeitadas</option>
+                </select>
+              </div>
+            </div>
             <div className="overflow-x-auto">
               <table className="min-w-full text-sm border-separate border-spacing-y-1">
                 <thead>

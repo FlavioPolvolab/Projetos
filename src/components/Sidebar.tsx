@@ -39,7 +39,6 @@ const Sidebar: React.FC<SidebarProps> = ({
     { id: 'projects', label: 'Projetos', icon: FolderOpen },
     { id: 'tasks', label: 'Minhas Tarefas', icon: CheckSquare },
     { id: 'flow', label: 'Flow', icon: TrendingUp },
-    { id: 'divulgacao', label: 'Divulgação', icon: TrendingUp },
     { id: 'comments', label: 'Comentários', icon: MessageCircle },
     // Aba Pessoal para managers e admins
     ...(user?.roles.includes('admin') || user?.roles.includes('manager')

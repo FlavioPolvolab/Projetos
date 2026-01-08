@@ -11,15 +11,43 @@ export const useProjects = () => {
   const { user, logout } = useAuth();
 
   useEffect(() => {
+    let mounted = true;
+    
     if (user) {
-      fetchProjects();
+      fetchProjects().then(() => {
+        if (!mounted) {
+          setIsLoading(false);
+        }
+      }).catch(() => {
+        if (mounted) {
+          setIsLoading(false);
+        }
+      });
+    } else {
+      // Se não há usuário, limpa os projetos e para o loading
+      if (mounted) {
+        setProjects([]);
+        setIsLoading(false);
+      }
     }
+
+    return () => {
+      mounted = false;
+    };
   }, [user]);
 
   const fetchProjects = async () => {
     try {
       setIsLoading(true);
       setProjectsError(undefined);
+      
+      // Verifica se há sessão válida antes de buscar
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) {
+        setIsLoading(false);
+        setProjectsError('Sessão expirada. Faça login novamente.');
+        return;
+      }
       
       // Fetch projects with their stages and tasks
       const { data: projectsData, error: projectsError } = await supabase
@@ -40,6 +68,7 @@ export const useProjects = () => {
       if (projectsError) {
         setProjectsError('Erro ao buscar projetos.');
         console.error('Error fetching projects:', projectsError);
+        setIsLoading(false);
         return;
       }
 
