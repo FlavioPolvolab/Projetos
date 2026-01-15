@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { Search, Filter, CheckSquare, List, LayoutGrid } from 'lucide-react';
 import { useProjectsContext } from '../contexts/ProjectsContext';
 import { useNotificationsContext } from '../contexts/NotificationsContext';
+import { useAuth } from '../contexts/AuthContext';
 import TaskCard from './TaskCard';
 import { Task, User, Project } from '../types';
 import CreateTaskModal from './CreateTaskModal';
@@ -16,8 +17,9 @@ interface TasksViewProps {
 type EditingTaskWithProject = Task & { projectId?: string; stageId?: string };
 
 const TasksView: React.FC<TasksViewProps> = ({ initialUserFilter }) => {
-  const { getUserTasks, updateTaskStatus, updateTask, transferTask, getAllUsers, fetchProjects, isLoading, getUserProjects } = useProjectsContext();
+  const { getUserTasks, updateTaskStatus, updateTask, transferTask, getAllUsers, fetchProjects, isLoading, getUserProjects, createProject, createTask, projects } = useProjectsContext();
   const { addNotification } = useNotificationsContext();
+  const { user } = useAuth();
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState<Task['status'] | 'all'>('all');
   const [userFilter, setUserFilter] = useState<string>(initialUserFilter || 'all');
@@ -34,6 +36,7 @@ const TasksView: React.FC<TasksViewProps> = ({ initialUserFilter }) => {
   const [selectedTask, setSelectedTask] = useState<Task | null>(null);
   const [showDetailsModal, setShowDetailsModal] = useState(false);
   const [outrasSort, setOutrasSort] = useState<'start' | 'due'>('start');
+  const [showCreateTaskModal, setShowCreateTaskModal] = useState(false);
 
   const userTasks = getUserTasks();
   const userProjects = getUserProjects();
@@ -48,7 +51,8 @@ const TasksView: React.FC<TasksViewProps> = ({ initialUserFilter }) => {
       task.description.toLowerCase().includes(searchTerm.toLowerCase()) ||
       (task.projectName && task.projectName.toLowerCase().includes(searchTerm.toLowerCase()));
     const matchesStatus = statusFilter === 'all' || task.status === statusFilter;
-    const matchesUser = userFilter === 'all' || task.assignedTo === userFilter;
+    const assigneeIds = Array.isArray(task.assignedTo) ? task.assignedTo : (task.assignedTo ? [task.assignedTo] : []);
+    const matchesUser = userFilter === 'all' || assigneeIds.includes(userFilter);
     const matchesProject = projectFilter === 'all' || (task.projectName && task.projectName === projectFilter);
     return matchesSearch && matchesStatus && matchesUser && matchesProject;
   });
@@ -80,7 +84,11 @@ const TasksView: React.FC<TasksViewProps> = ({ initialUserFilter }) => {
   const handleSaveTask = async (projectId: string, stageId: string, taskData: any) => {
     if (editingTask) {
       await updateTask(editingTask.id, taskData);
-      if (taskData.assignedTo) {
+      const assigneeIds = Array.isArray(taskData.assignedTo) 
+        ? taskData.assignedTo.filter(id => id && id !== '')
+        : (taskData.assignedTo && taskData.assignedTo !== '' ? [taskData.assignedTo] : []);
+      
+      for (const assigneeId of assigneeIds) {
         await addNotification({
           type: 'task_assigned',
           title: 'Tarefa atribuída/atualizada',
@@ -89,7 +97,7 @@ const TasksView: React.FC<TasksViewProps> = ({ initialUserFilter }) => {
           projectName: '',
           priority: taskData.priority || 'medium',
           read: false
-        }, taskData.assignedTo);
+        }, assigneeId);
       }
       setEditingTask(null);
       setShowEditTaskModal(false);
@@ -227,15 +235,26 @@ const TasksView: React.FC<TasksViewProps> = ({ initialUserFilter }) => {
                   )}
                 </td>
                 <td className="px-4 py-2 whitespace-nowrap flex gap-2">
-                  {task.status === 'pending' && (
-                    <button className="px-2 py-1 bg-blue-500 text-white rounded text-xs hover:bg-blue-600" onClick={() => handleStartTask(task)}>Iniciar</button>
-                  )}
-                  {task.status === 'in-progress' && task.requiresApproval && (
-                    <button className="px-2 py-1 bg-yellow-500 text-white rounded text-xs hover:bg-yellow-600" onClick={() => handleSendForApproval(task)}>Mandar para aprovação</button>
-                  )}
-                  {(task.status === 'in-progress' || task.status === 'approved') && (
-                    <button className="px-2 py-1 bg-green-500 text-white rounded text-xs hover:bg-green-600" onClick={() => handleCompleteTask(task)}>Concluir</button>
-                  )}
+                  {(() => {
+                    const assignedToIds = Array.isArray(task.assignedTo) ? task.assignedTo : (task.assignedTo ? [task.assignedTo] : []);
+                    const isAssigned = assignedToIds.includes(user?.id || '');
+                    const isAdminOrManager = user?.roles.includes('admin') || user?.roles.includes('manager');
+                    const canAct = isAssigned || isAdminOrManager;
+                    
+                    return (
+                      <>
+                        {task.status === 'pending' && canAct && (
+                          <button className="px-2 py-1 bg-blue-500 text-white rounded text-xs hover:bg-blue-600" onClick={() => handleStartTask(task)}>Iniciar</button>
+                        )}
+                        {task.status === 'in-progress' && task.requiresApproval && canAct && (
+                          <button className="px-2 py-1 bg-yellow-500 text-white rounded text-xs hover:bg-yellow-600" onClick={() => handleSendForApproval(task)}>Mandar para aprovação</button>
+                        )}
+                        {(task.status === 'in-progress' || task.status === 'approved') && canAct && (
+                          <button className="px-2 py-1 bg-green-500 text-white rounded text-xs hover:bg-green-600" onClick={() => handleCompleteTask(task)}>Concluir</button>
+                        )}
+                      </>
+                    );
+                  })()}
                 </td>
               </tr>
             ))}
@@ -257,6 +276,13 @@ const TasksView: React.FC<TasksViewProps> = ({ initialUserFilter }) => {
         </div>
         <div className="flex items-center gap-4">
           <span className="text-sm text-gray-500">{filteredTasks.length} de {userTasks.length} tarefas</span>
+          <button
+            onClick={() => setShowCreateTaskModal(true)}
+            className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors font-medium flex items-center gap-2"
+          >
+            <CheckSquare className="w-5 h-5" />
+            Criar Tarefa
+          </button>
           <button
             className={`p-2 rounded-lg border ${viewMode === 'cards' ? 'bg-blue-50 border-blue-500 text-blue-700' : 'bg-white border-gray-300 text-gray-500'} transition`}
             onClick={() => setViewMode('cards')}
@@ -413,6 +439,22 @@ const TasksView: React.FC<TasksViewProps> = ({ initialUserFilter }) => {
         projects={userProjects}
         users={users}
         editingTask={editingTask}
+      />
+      <CreateTaskModal
+        isOpen={showCreateTaskModal}
+        onClose={() => { setShowCreateTaskModal(false); }}
+        onCreateTask={async (projectId, stageId, taskData) => {
+          await createTask(projectId, stageId, taskData);
+          // createTask já faz fetchProjects internamente
+        }}
+        projects={userProjects}
+        users={users}
+        allowCreateProject={true}
+        onCreateProject={async (projectData) => {
+          const newProject = await createProject(projectData);
+          // O createProject já faz fetchProjects internamente e retorna o projeto com stages
+          return newProject;
+        }}
       />
       {/* Modal de bloqueio para ação de dependência */}
       <ModalCentralizado open={!!blockedMsg} onClose={() => setBlockedMsg(null)} title="Ação Bloqueada">

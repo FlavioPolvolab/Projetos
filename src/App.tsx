@@ -16,6 +16,7 @@ import ErrorBoundary from './components/ErrorBoundary';
 import TaskDetailsModal from './components/TaskDetailsModal';
 import { useProjectsContext } from './contexts/ProjectsContext';
 import DivulgacaoView from './components/DivulgacaoView';
+import { ConnectionStatus } from './components/ConnectionStatus';
 
 const AppContent: React.FC = () => {
   const { user, isLoading, authError } = useAuth();
@@ -28,10 +29,34 @@ const AppContent: React.FC = () => {
   const [users, setUsers] = useState<any[]>([]);
   const [projects, setProjects] = useState<any[]>([]);
 
+  // Cache para evitar chamadas desnecessárias
+  const usersFetchedRef = React.useRef(false);
+  const projectsFetchedRef = React.useRef(false);
+  
   React.useEffect(() => {
-    getAllUsers().then(setUsers);
-    setProjects(getUserProjects());
-  }, []);
+    if (user && !usersFetchedRef.current) {
+      usersFetchedRef.current = true;
+      getAllUsers().then(setUsers);
+    } else if (!user) {
+      usersFetchedRef.current = false;
+      setUsers([]);
+    }
+  }, [user, getAllUsers]);
+
+  React.useEffect(() => {
+    if (user) {
+      // getUserProjects é uma função síncrona que retorna do estado, não precisa de cache
+      // Mas vamos evitar chamadas desnecessárias durante re-renders
+      const currentProjects = getUserProjects();
+      if (currentProjects.length > 0 || !projectsFetchedRef.current) {
+        setProjects(currentProjects);
+        projectsFetchedRef.current = true;
+      }
+    } else {
+      projectsFetchedRef.current = false;
+      setProjects([]);
+    }
+  }, [user, getUserProjects]);
 
   const handleOpenTask = (taskId: string) => {
     setActiveTab('tasks');
@@ -100,6 +125,7 @@ const AppContent: React.FC = () => {
 
   return (
     <ErrorBoundary>
+      <ConnectionStatus />
       <MainLayout activeTab={activeTab} setActiveTab={setActiveTab} onUserClick={() => setShowUserModal(true)} onOpenTask={handleOpenTask}>
           {renderContent()}
     </MainLayout>

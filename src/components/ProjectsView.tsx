@@ -12,16 +12,17 @@ import TaskDetailsModal from './TaskDetailsModal';
 import { useAuth } from '../contexts/AuthContext';
 
 const ProjectsView: React.FC = () => {
-  const { projects, createProject, updateProject, createTask, getAllUsers, getUserProjects, fetchProjects, isLoading } = useProjectsContext();
+  const { projects, createProject, updateProject, closeProject, createTask, getAllUsers, getUserProjects, fetchProjects, isLoading } = useProjectsContext();
   const [showCreateProject, setShowCreateProject] = useState(false);
   const [showCreateTask, setShowCreateTask] = useState(false);
   const [editingProject, setEditingProject] = useState<Project | null>(null);
   const [users, setUsers] = useState<any[]>([]);
   const [searchTerm, setSearchTerm] = useState('');
   const [priorityFilter, setPriorityFilter] = useState<'all' | 'low' | 'medium' | 'high' | 'critical'>('all');
+  const [creatorFilter, setCreatorFilter] = useState<string>('all');
   const [openStageId, setOpenStageId] = useState<string | null>(null);
   const popoverTimeout = useRef<NodeJS.Timeout | null>(null);
-  const [viewMode, setViewMode] = useState<'cards' | 'list'>('cards');
+  const [viewMode, setViewMode] = useState<'cards' | 'list'>('list');
   const [tooltipProjectId, setTooltipProjectId] = useState<string | null>(null);
   const [tooltipTarefasPosition, setTooltipTarefasPosition] = useState<'top' | 'bottom'>('bottom');
   const [tooltipTarefasRect, setTooltipTarefasRect] = useState<DOMRect | null>(null);
@@ -42,6 +43,7 @@ const ProjectsView: React.FC = () => {
       case 'planning': return 'bg-blue-100 text-blue-800';
       case 'in-progress': return 'bg-yellow-100 text-yellow-800';
       case 'completed': return 'bg-green-100 text-green-800';
+      case 'encerrado': return 'bg-gray-100 text-gray-800';
       case 'on-hold': return 'bg-red-100 text-red-800';
       default: return 'bg-gray-100 text-gray-800';
     }
@@ -52,6 +54,7 @@ const ProjectsView: React.FC = () => {
       case 'planning': return 'Planejamento';
       case 'in-progress': return 'Em Andamento';
       case 'completed': return 'Concluído';
+      case 'encerrado': return 'Encerrado';
       case 'on-hold': return 'Pausado';
       default: return status;
     }
@@ -92,6 +95,13 @@ const ProjectsView: React.FC = () => {
     await fetchProjects();
   };
 
+  const handleCloseProject = async (projectId: string) => {
+    await closeProject(projectId);
+    setEditingProject(null);
+    setShowCreateProject(false);
+    await fetchProjects();
+  };
+
   const handleCreateTask = async (projectId: string, stageId: string, taskData: any) => {
     await createTask(projectId, stageId, taskData);
     await fetchProjects();
@@ -111,11 +121,12 @@ const ProjectsView: React.FC = () => {
         stage.description.toLowerCase().includes(search)
       );
     const matchesPriority = priorityFilter === 'all' || project.priority === priorityFilter;
+    const matchesCreator = creatorFilter === 'all' || project.createdBy === creatorFilter;
     // Filtro por aba
     if (tab === 'concluidos') {
-      return matchesSearch && matchesPriority && project.status === 'completed';
+      return matchesSearch && matchesPriority && matchesCreator && (project.status === 'completed' || project.status === 'encerrado');
     } else {
-      return matchesSearch && matchesPriority && project.status !== 'completed';
+      return matchesSearch && matchesPriority && matchesCreator && project.status !== 'completed' && project.status !== 'encerrado';
     }
   });
 
@@ -132,10 +143,13 @@ const ProjectsView: React.FC = () => {
     const assignees = new Set<string>();
     project.stages.forEach(stage => {
       stage.tasks.forEach(task => {
-        if (task.assignedTo && users.find(u => u.id === task.assignedTo)) {
-          const user = users.find(u => u.id === task.assignedTo);
+        const assigneeIds = Array.isArray(task.assignedTo) ? task.assignedTo : (task.assignedTo ? [task.assignedTo] : []);
+        assigneeIds.forEach(assigneeId => {
+          if (assigneeId && users.find(u => u.id === assigneeId)) {
+            const user = users.find(u => u.id === assigneeId);
           if (user) assignees.add(user.name);
         }
+        });
       });
     });
     return Array.from(assignees);
@@ -260,6 +274,18 @@ const ProjectsView: React.FC = () => {
             <option value="medium">Média</option>
             <option value="high">Alta</option>
             <option value="critical">Crítica</option>
+          </select>
+          <select
+            value={creatorFilter}
+            onChange={e => setCreatorFilter(e.target.value)}
+            className="w-[220px] px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+          >
+            <option value="all">Todos os Criadores</option>
+            {users.map(user => (
+              <option key={user.id} value={user.id}>
+                {user.name}
+              </option>
+            ))}
           </select>
         </div>
       </div>
@@ -691,6 +717,7 @@ const ProjectsView: React.FC = () => {
         onCreateProject={handleSaveProject}
         users={users}
         editingProject={editingProject}
+        onCloseProject={handleCloseProject}
       />
 
       <CreateTaskModal

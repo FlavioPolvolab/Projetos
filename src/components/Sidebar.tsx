@@ -33,6 +33,27 @@ const Sidebar: React.FC<SidebarProps> = ({
   onOpenTask
 }) => {
   const { user, logout } = useAuth();
+  const [isLoggingOut, setIsLoggingOut] = useState(false);
+
+  const handleLogout = async (e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    
+    if (isLoggingOut) return; // Prevenir múltiplos cliques
+    
+    setIsLoggingOut(true);
+    try {
+      await logout();
+      // Força reload da página para garantir limpeza completa
+      window.location.href = '/';
+    } catch (error) {
+      console.error('Erro ao fazer logout:', error);
+      // Mesmo com erro, força reload
+      window.location.href = '/';
+    } finally {
+      setIsLoggingOut(false);
+    }
+  };
 
   const menuItems = [
     { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
@@ -148,15 +169,23 @@ const Sidebar: React.FC<SidebarProps> = ({
           })}
           <div className="mt-auto pt-4 border-t border-gray-200">
           <button
-            onClick={logout}
+            onClick={handleLogout}
+            disabled={isLoggingOut}
+            type="button"
             className={`
               w-full flex items-center space-x-3 px-3 py-2.5 rounded-lg 
               text-red-600 hover:bg-red-50 transition-colors
               ${isCollapsed ? 'justify-center' : ''}
+              ${isLoggingOut ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'}
             `}
+            style={{ zIndex: 1000 }}
           >
             <LogOut className="w-5 h-5 flex-shrink-0" />
-            {!isCollapsed && <span className="font-medium">Sair</span>}
+            {!isCollapsed && (
+              <span className="font-medium">
+                {isLoggingOut ? 'Saindo...' : 'Sair'}
+              </span>
+            )}
           </button>
         </div>
         </nav>

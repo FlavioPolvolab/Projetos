@@ -10,7 +10,7 @@ export interface Project {
   id: string;
   name: string;
   description: string;
-  status: 'planning' | 'in-progress' | 'completed' | 'on-hold';
+  status: 'planning' | 'in-progress' | 'completed' | 'on-hold' | 'encerrado';
   priority: 'low' | 'medium' | 'high' | 'critical';
   createdAt: Date;
   createdBy: string;
@@ -40,7 +40,8 @@ export interface Task {
   description: string;
   status: 'pending' | 'in-progress' | 'waiting-approval' | 'approved' | 'completed' | 'rejected';
   priority: 'low' | 'medium' | 'high' | 'critical';
-  assignedTo: string;
+  assignedTo: string | string[]; // Suporta string (compatibilidade) ou array de IDs
+  assignedToUsers?: Array<{ id: string; name: string; email: string }>; // Dados completos dos usuários atribuídos
   createdBy: string;
   createdAt: Date;
   dueDate?: Date;

@@ -41,7 +41,15 @@ const TaskDetailsModal: React.FC<TaskDetailsModalProps> = ({ isOpen, onClose, ta
       blocked = true;
     });
     if (!blocked) {
-      if (task.assignedTo) {
+      // fetchProjects será chamado automaticamente pela função updateTaskStatus
+      
+      // Enviar notificação para todos os responsáveis
+      const assigneeIds = Array.isArray(task.assignedTo) 
+        ? task.assignedTo.filter(id => id && id !== '')
+        : (task.assignedTo && task.assignedTo !== '' ? [task.assignedTo] : []);
+      
+      for (const assigneeId of assigneeIds) {
+        if (assigneeId) {
         await addNotification({
           type: 'task_assigned',
           title: 'Tarefa atribuída/atualizada',
@@ -50,7 +58,8 @@ const TaskDetailsModal: React.FC<TaskDetailsModalProps> = ({ isOpen, onClose, ta
           projectName: project?.name || '',
           priority: task.priority || 'medium',
           read: false
-        }, task.assignedTo);
+          }, assigneeId);
+        }
       }
       onClose();
     }
@@ -67,7 +76,16 @@ const TaskDetailsModal: React.FC<TaskDetailsModalProps> = ({ isOpen, onClose, ta
     }
   };
 
-  const responsible = users.find(u => u.id === task.assignedTo);
+  // Processar múltiplos responsáveis
+  const assigneeIds = Array.isArray(task.assignedTo) 
+    ? task.assignedTo.filter(id => id && id !== '')
+    : (task.assignedTo && task.assignedTo !== '' ? [task.assignedTo] : []);
+  
+  // Buscar todos os responsáveis
+  const responsibles = assigneeIds
+    .map(id => users.find(u => u.id === id))
+    .filter(Boolean) as Array<{ id: string; name: string; email: string; roles: string[] }>;
+  
   const creator = users.find(u => u.id === task.createdBy);
 
   const isManagerOrAdmin = user?.roles.includes('admin') || user?.roles.includes('manager');
@@ -90,7 +108,9 @@ const TaskDetailsModal: React.FC<TaskDetailsModalProps> = ({ isOpen, onClose, ta
               <span className="px-2 py-1 rounded bg-gray-100 font-medium">Prioridade: {task.priority}</span>
               <span className="px-2 py-1 rounded bg-gray-100 font-medium">Status: {task.status}</span>
               {project?.name && <span className="px-2 py-1 rounded bg-gray-100 font-medium">Projeto: {project.name}</span>}
-              <span className="px-2 py-1 rounded bg-gray-100 font-medium">Responsável: {responsible?.name || '-'}</span>
+              <span className="px-2 py-1 rounded bg-gray-100 font-medium">
+                Responsável: {responsibles.length > 0 ? responsibles.map(r => r.name).join(', ') : '-'}
+              </span>
               <span className="px-2 py-1 rounded bg-gray-100 font-medium">Criador: {creator?.name || '-'}</span>
               {task.startDate && <span className="px-2 py-1 rounded bg-gray-100 font-medium">Início: {formatDateUTC(task.startDate)}</span>}
               {task.dueDate && <span className="px-2 py-1 rounded bg-gray-100 font-medium">Entrega: {formatDateUTC(task.dueDate)}</span>}
@@ -123,11 +143,17 @@ const TaskDetailsModal: React.FC<TaskDetailsModalProps> = ({ isOpen, onClose, ta
                   <ArrowLeftRight className="w-4 h-4 mr-1" /> Iniciar
                 </button>
               )}
-              {(task.status === 'in-progress' && !task.requiresApproval) || task.status === 'approved' ? (
-                <button onClick={() => handleStatusChange('completed')} className="flex items-center px-3 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 text-sm font-medium">
-                  <CheckSquare className="w-4 h-4 mr-1" /> Concluir
-                </button>
-              ) : null}
+              {(() => {
+                const assignedToIds = Array.isArray(task.assignedTo) ? task.assignedTo : (task.assignedTo ? [task.assignedTo] : []);
+                const isAssigned = assignedToIds.includes(user?.id || '');
+                const canComplete = isAssigned || isManagerOrAdmin;
+                
+                return ((task.status === 'in-progress' && !task.requiresApproval) || task.status === 'approved') && canComplete ? (
+                  <button onClick={() => handleStatusChange('completed')} className="flex items-center px-3 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 text-sm font-medium">
+                    <CheckSquare className="w-4 h-4 mr-1" /> Concluir
+                  </button>
+                ) : null;
+              })()}
               {task.status === 'in-progress' && task.requiresApproval && (
                 <button onClick={handleSendForApproval} className="flex items-center px-3 py-2 bg-yellow-500 text-white rounded-lg hover:bg-yellow-600 text-sm font-medium">
                   <ArrowLeftRight className="w-4 h-4 mr-1" /> Enviar para Aprovação

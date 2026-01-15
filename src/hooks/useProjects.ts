@@ -1,7 +1,8 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { Project, Task, Stage, StatusHistoryItem } from '../types';
 import { useAuth } from '../contexts/AuthContext';
 import { supabase } from '../lib/supabase';
+import { withRetry, supabaseQuery, getConnectionStatus } from '../lib/supabaseConnection';
 import { v4 as uuidv4 } from 'uuid';
 
 export const useProjects = () => {
@@ -9,66 +10,117 @@ export const useProjects = () => {
   const [isLoading, setIsLoading] = useState(true);
   const [projectsError, setProjectsError] = useState<string | undefined>(undefined);
   const { user, logout } = useAuth();
+  const fetchingRef = useRef(false);
+  const lastFetchTimeRef = useRef<number>(0);
+  const debounceTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const CACHE_DURATION = 5000; // Cache de 5 segundos para evitar chamadas muito frequentes
 
-  useEffect(() => {
-    let mounted = true;
-    
-    if (user) {
-      fetchProjects().then(() => {
-        if (!mounted) {
-          setIsLoading(false);
-        }
-      }).catch(() => {
-        if (mounted) {
-          setIsLoading(false);
-        }
-      });
-    } else {
-      // Se não há usuário, limpa os projetos e para o loading
-      if (mounted) {
-        setProjects([]);
-        setIsLoading(false);
-      }
+  const fetchProjects = useCallback(async (force = false) => {
+    // Evitar múltiplas chamadas simultâneas
+    if (fetchingRef.current && !force) {
+      return;
     }
-
-    return () => {
-      mounted = false;
-    };
-  }, [user]);
-
-  const fetchProjects = async () => {
-    try {
+    
+    // Se não for forçado e já foi chamado recentemente, usar cache
+    const now = Date.now();
+    if (!force && (now - lastFetchTimeRef.current) < CACHE_DURATION) {
+      return;
+    }
+    
+    // Limpar timeout anterior se houver (debounce)
+    if (debounceTimeoutRef.current) {
+      clearTimeout(debounceTimeoutRef.current);
+      debounceTimeoutRef.current = null;
+    }
+    
+    // Debounce: aguardar um pouco antes de fazer a requisição (exceto se forçado)
+    if (!force) {
+      return new Promise<void>((resolve) => {
+        debounceTimeoutRef.current = setTimeout(async () => {
+          // Verificar novamente se já está buscando
+          if (fetchingRef.current && !force) {
+            resolve();
+            return;
+          }
+          
+          try {
+            await executeFetch();
+            resolve();
+          } catch (error) {
+            resolve();
+          }
+        }, 500); // Debounce de 500ms
+      });
+    }
+    
+    // Se for forçado, executar imediatamente
+    return executeFetch();
+    
+    async function executeFetch() {
+      try {
+        fetchingRef.current = true;
       setIsLoading(true);
       setProjectsError(undefined);
       
       // Verifica se há sessão válida antes de buscar
-      const { data: { session } } = await supabase.auth.getSession();
+      const { data: { session } } = await withRetry(
+        () => supabase.auth.getSession(),
+        { timeout: 10000 }
+      );
+      
       if (!session) {
         setIsLoading(false);
         setProjectsError('Sessão expirada. Faça login novamente.');
+        fetchingRef.current = false;
         return;
       }
       
-      // Fetch projects with their stages and tasks
-      const { data: projectsData, error: projectsError } = await supabase
-        .from('projects')
-        .select(`
-          *,
-          stages (
+      // Verificar status da conexão
+      const connectionStatus = getConnectionStatus();
+      if (!connectionStatus.isConnected && connectionStatus.consecutiveFailures >= 3) {
+        setProjectsError('Problemas de conexão detectados. Tentando reconectar...');
+      }
+      
+      // Fetch projects with their stages and tasks usando retry
+      const { data: projectsData, error: projectsError } = await supabaseQuery(
+        supabase,
+        () => supabase
+          .from('projects')
+          .select(`
             *,
-            tasks (
+            stages (
               *,
-              task_comments (*),
-              task_status_history (*)
+              tasks (
+                *,
+                task_comments (*),
+                task_status_history (*),
+                task_assignees (
+                  user_id,
+                  users (
+                    id,
+                    name,
+                    email
+                  )
+                )
+              )
             )
-          )
-        `)
-        .order('created_at', { ascending: false });
+          `)
+          .order('created_at', { ascending: false }),
+        { timeout: 30000, maxRetries: 3 }
+      );
 
       if (projectsError) {
-        setProjectsError('Erro ao buscar projetos.');
+        const errorMessage = projectsError.message || 'Erro ao buscar projetos.';
+        setProjectsError(
+          errorMessage.includes('timeout') || errorMessage.includes('timeout')
+            ? 'Tempo de conexão esgotado. Verifique sua internet e tente novamente.'
+            : errorMessage.includes('Network') || errorMessage.includes('fetch')
+            ? 'Erro de conexão com o servidor. Verifique sua internet.'
+            : 'Erro ao buscar projetos. Tente novamente.'
+        );
         console.error('Error fetching projects:', projectsError);
         setIsLoading(false);
+        fetchingRef.current = false;
         return;
       }
 
@@ -131,13 +183,27 @@ export const useProjects = () => {
             const users: any[] = [];
             // Montar threads de comentários
             const comments = buildCommentThreads(task.task_comments || [], users);
+            
+            // Processar assignees da tabela task_assignees
+            const assignees = (task.task_assignees || []).map((ta: any) => ({
+              id: ta.user_id || ta.users?.id,
+              name: ta.users?.name || '',
+              email: ta.users?.email || ''
+            })).filter((a: any) => a.id);
+            
+            // assignedTo: manter compatibilidade com string (assigned_to) ou usar array de assignees
+            const assignedToIds = assignees.length > 0 
+              ? assignees.map((a: any) => a.id)
+              : (task.assigned_to ? [task.assigned_to] : []);
+            
             return {
             id: task.id,
             title: task.title,
             description: task.description,
             status: task.status,
             priority: task.priority,
-            assignedTo: task.assigned_to || '',
+            assignedTo: assignedToIds.length === 1 ? assignedToIds[0] : assignedToIds,
+            assignedToUsers: assignees.length > 0 ? assignees : undefined,
             createdBy: task.created_by || '',
             createdAt: new Date(task.created_at),
             dueDate: task.due_date ? new Date(task.due_date) : undefined,
@@ -159,18 +225,8 @@ export const useProjects = () => {
         })) || []
       }))
 
-      // LOG DE DEPURAÇÃO
-      // if (transformedProjects) {
-      //   transformedProjects.forEach(project => {
-      //     project.stages.forEach(stage => {
-      //       stage.tasks.forEach(task => {
-      //         console.log('Tarefa:', task.title, '| startDate:', task.startDate, '| dueDate:', task.dueDate);
-      //       });
-      //     });
-      //   });
-      // }
-
       setProjects(transformedProjects);
+      lastFetchTimeRef.current = Date.now();
     } catch (error: any) {
       setProjectsError('Erro ao buscar projetos.');
       if (error?.message?.includes('JWT expired') || error?.status === 401) {
@@ -180,8 +236,42 @@ export const useProjects = () => {
       console.error('Error in fetchProjects:', error);
     } finally {
       setIsLoading(false);
+      fetchingRef.current = false;
     }
-  };
+    }
+  }, [user, logout]);
+
+  useEffect(() => {
+    let mounted = true;
+    let timeoutId: NodeJS.Timeout | null = null;
+    
+    if (user) {
+      // Adicionar um pequeno delay para garantir que a sessão está totalmente inicializada
+      timeoutId = setTimeout(() => {
+        if (!mounted) return;
+        fetchProjects(true).then(() => {
+          if (!mounted) {
+            setIsLoading(false);
+          }
+        }).catch(() => {
+          if (mounted) {
+            setIsLoading(false);
+          }
+        });
+      }, 100);
+    } else {
+      // Se não há usuário, limpa os projetos e para o loading
+      if (mounted) {
+        setProjects([]);
+        setIsLoading(false);
+      }
+    }
+
+    return () => {
+      mounted = false;
+      if (timeoutId) clearTimeout(timeoutId);
+    };
+  }, [user, fetchProjects]);
 
   const createProject = async (projectData: Omit<Project, 'id' | 'createdAt' | 'createdBy'>) => {
     if (!user) return null;
@@ -207,50 +297,96 @@ export const useProjects = () => {
         return null;
       }
 
-      // Create stages
+      // Create stages com retry
+      const createdStages: any[] = [];
       for (const stage of projectData.stages) {
-        const { data: stageData, error: stageError } = await supabase
-          .from('stages')
-          .insert({
-            project_id: project.id,
-            name: stage.name,
-            description: stage.description,
-            order_index: stage.order,
-            requires_approval: stage.requiresApproval
-          })
-          .select()
-          .single();
+        const { data: stageData, error: stageError } = await supabaseQuery(
+          supabase,
+          () => supabase
+            .from('stages')
+            .insert({
+              project_id: project.id,
+              name: stage.name,
+              description: stage.description,
+              order_index: stage.order,
+              requires_approval: stage.requiresApproval
+            })
+            .select()
+            .single(),
+          { timeout: 15000, maxRetries: 2 }
+        );
 
         if (stageError) {
           console.error('Error creating stage:', stageError);
           continue;
         }
 
+        if (stageData) {
+          createdStages.push(stageData);
+        }
+
         // Create tasks for this stage
         for (const task of stage.tasks) {
-          const { error: taskError } = await supabase
+          // Processar assignedTo: pode ser string ou array
+          const assigneeIds = Array.isArray(task.assignedTo) 
+            ? task.assignedTo.filter((id: string) => id && id !== '')
+            : (task.assignedTo && task.assignedTo !== '' ? [task.assignedTo] : []);
+          
+          const firstAssignee = assigneeIds.length > 0 ? assigneeIds[0] : null;
+          
+          const { data: createdTask, error: taskError } = await supabase
             .from('tasks')
             .insert({
               stage_id: stageData.id,
               title: task.title,
               description: task.description,
               priority: task.priority,
-              assigned_to: task.assignedTo && task.assignedTo !== '' ? task.assignedTo : null,
+              assigned_to: firstAssignee,
               created_by: user.id,
               due_date: task.dueDate ? new Date(typeof task.dueDate === 'string' ? task.dueDate + 'T00:00:00' : task.dueDate).toISOString() : null,
               start_date: task.startDate ? new Date(typeof task.startDate === 'string' ? task.startDate + 'T00:00:00' : task.startDate).toISOString() : null,
               parent_task_id: task.parentTaskId || null,
               requires_approval: task.requiresApproval
-            });
+            })
+            .select()
+            .single();
 
           if (taskError) {
             console.error('Error creating task:', taskError);
+          } else if (createdTask && assigneeIds.length > 0) {
+            // Inserir múltiplos assignees na tabela task_assignees
+            const assigneesPayload = assigneeIds.map((userId: string) => ({
+              task_id: createdTask.id,
+              user_id: userId
+            }));
+            const { error: assigneesError } = await supabase
+              .from('task_assignees')
+              .insert(assigneesPayload);
+            
+            if (assigneesError) {
+              console.error('Erro ao atribuir usuários à tarefa:', assigneesError);
+            }
           }
         }
       }
 
       await fetchProjects();
-      return project;
+      
+      // Retornar projeto com stages para que o modal possa acessar o stageId
+      return {
+        ...project,
+        createdAt: new Date(project.created_at || new Date()),
+        createdBy: project.created_by || user.id,
+        stages: createdStages.map(stage => ({
+          id: stage.id,
+          name: stage.name,
+          description: stage.description || '',
+          order: stage.order_index || 0,
+          requiresApproval: stage.requires_approval || false,
+          status: 'pending' as const,
+          tasks: []
+        }))
+      } as Project;
     } catch (error: any) {
       setProjectsError('Erro ao criar projeto.');
       if (error?.message?.includes('JWT expired') || error?.status === 401) {
@@ -287,27 +423,61 @@ export const useProjects = () => {
 
     try {
       setProjectsError(undefined);
+      
+      // Processar assignedTo: pode ser string ou array
+      const assigneeIds = Array.isArray(taskData.assignedTo) 
+        ? taskData.assignedTo.filter(id => id && id !== '')
+        : (taskData.assignedTo && taskData.assignedTo !== '' ? [taskData.assignedTo] : []);
+      
+      // Manter compatibilidade: assigned_to será o primeiro assignee ou null
+      const firstAssignee = assigneeIds.length > 0 ? assigneeIds[0] : null;
+      
       const payload = {
         stage_id: stageId,
         title: taskData.title,
         description: taskData.description,
         priority: taskData.priority,
-        assigned_to: taskData.assignedTo && taskData.assignedTo !== '' ? taskData.assignedTo : null,
+        assigned_to: firstAssignee,
         created_by: user.id,
         due_date: toTimestampUTC(taskData.dueDate),
         start_date: toDateYYYYMMDD(taskData.startDate),
         parent_task_id: taskData.parentTaskId || null,
         requires_approval: taskData.requiresApproval
       };
-      const { data: task, error } = await supabase
-        .from('tasks')
-        .insert(payload)
-        .select()
-        .single();
+      const { data: task, error } = await supabaseQuery(
+        supabase,
+        () => supabase
+          .from('tasks')
+          .insert(payload)
+          .select()
+          .single(),
+        { timeout: 20000, maxRetries: 2 }
+      );
+      
       if (error) {
-        setProjectsError('Erro ao criar tarefa.');
+        const errorMsg = error.message || 'Erro ao criar tarefa.';
+        setProjectsError(
+          errorMsg.includes('timeout') || errorMsg.includes('Network')
+            ? 'Erro de conexão ao criar tarefa. Tente novamente.'
+            : 'Erro ao criar tarefa.'
+        );
         console.error('Erro ao criar tarefa:', error);
-      } else {
+        return null;
+      }
+
+      // Inserir múltiplos assignees na tabela task_assignees
+      if (assigneeIds.length > 0) {
+        const assigneesPayload = assigneeIds.map(userId => ({
+          task_id: task.id,
+          user_id: userId
+        }));
+        const { error: assigneesError } = await supabase
+          .from('task_assignees')
+          .insert(assigneesPayload);
+        
+        if (assigneesError) {
+          console.error('Erro ao atribuir usuários à tarefa:', assigneesError);
+        }
       }
 
       // Add initial status history
@@ -333,7 +503,7 @@ export const useProjects = () => {
     }
   };
 
-  const getUserTasks = () => {
+  const getUserTasks = useCallback(() => {
     if (!user) return [];
     // Montar um mapa de id -> título para lookup rápido
     const allTasks = projects.flatMap(project =>
@@ -351,12 +521,18 @@ export const useProjects = () => {
     });
     // Retornar apenas as tarefas do usuário, preenchendo parentTaskTitle corretamente
     return allTasks
-      .filter(task => task.assignedTo === user.id)
+      .filter(task => {
+        // Verificar se o usuário está nos responsáveis (pode ser string ou array)
+        const assigneeIds = Array.isArray(task.assignedTo) 
+          ? task.assignedTo 
+          : (task.assignedTo ? [task.assignedTo] : []);
+        return assigneeIds.includes(user.id);
+      })
       .map(task => ({
         ...task,
         parentTaskTitle: task.parentTaskId ? taskTitles.get(task.parentTaskId) || '' : undefined
       }));
-  };
+  }, [user, projects]);
 
   const getTasksForApproval = () => {
     if (!user || (user.roles.includes('admin') === false && user.roles.includes('aprovador') === false)) return [];
@@ -432,13 +608,20 @@ export const useProjects = () => {
         updates.completed_at = new Date().toISOString();
       }
 
-      const { error } = await supabase
-        .from('tasks')
-        .update(updates)
-        .eq('id', taskId);
+      const { error } = await supabaseQuery(
+        supabase,
+        () => supabase
+          .from('tasks')
+          .update(updates)
+          .eq('id', taskId),
+        { timeout: 15000, maxRetries: 2 }
+      );
 
       if (error) {
         console.error('Error updating task status:', error);
+        if (error.message?.includes('timeout') || error.message?.includes('Network')) {
+          setProjectsError('Erro de conexão ao atualizar tarefa. Tente novamente.');
+        }
         return;
       }
 
@@ -619,7 +802,7 @@ export const useProjects = () => {
     }
   };
 
-  const getAllUsers = async () => {
+  const getAllUsers = useCallback(async () => {
     try {
       const { data, error } = await supabase
         .from('users')
@@ -636,7 +819,7 @@ export const useProjects = () => {
       console.error('Error in getAllUsers:', error);
       return [];
     }
-  };
+  }, []);
 
   const updateProject = async (projectId: string, updatedData: Partial<Project>) => {
     try {
@@ -717,19 +900,51 @@ export const useProjects = () => {
 
         // Atualizar e criar tarefas
         for (const task of updatedTasks) {
+          // Processar assignedTo: pode ser string ou array
+          const assigneeIds = Array.isArray(task.assignedTo) 
+            ? task.assignedTo.filter((id: string) => id && id !== '')
+            : (task.assignedTo && task.assignedTo !== '' ? [task.assignedTo] : []);
+          
+          // Manter compatibilidade: assigned_to será o primeiro assignee ou null
+          const firstAssignee = assigneeIds.length > 0 ? assigneeIds[0] : null;
+          
           if (dbTasksMap.has(task.id)) {
             // Atualizar tarefa existente
             const updatePayload = {
               title: task.title,
               description: task.description,
               priority: task.priority,
-              assigned_to: task.assignedTo && task.assignedTo !== '' ? task.assignedTo : null,
+              assigned_to: firstAssignee,
               due_date: task.dueDate ? new Date(typeof task.dueDate === 'string' ? task.dueDate + 'T00:00:00' : task.dueDate).toISOString() : null,
               start_date: task.startDate ? new Date(typeof task.startDate === 'string' ? task.startDate + 'T00:00:00' : task.startDate).toISOString() : null,
               parent_task_id: task.parentTaskId && task.parentTaskId !== '' ? task.parentTaskId : null,
               requires_approval: task.requiresApproval
             };
-            await supabase.from('tasks').update(updatePayload).eq('id', task.id);
+            const { data: updatedTask } = await supabase.from('tasks').update(updatePayload).eq('id', task.id).select().single();
+            
+            // Atualizar tabela task_assignees para tarefas existentes
+            if (updatedTask) {
+              // Remover todos os assignees existentes
+              await supabase
+                .from('task_assignees')
+                .delete()
+                .eq('task_id', task.id);
+              
+              // Inserir os novos assignees
+              if (assigneeIds.length > 0) {
+                const assigneesPayload = assigneeIds.map((userId: string) => ({
+                  task_id: task.id,
+                  user_id: userId
+                }));
+                const { error: assigneesError } = await supabase
+                  .from('task_assignees')
+                  .insert(assigneesPayload);
+                
+                if (assigneesError) {
+                  console.error('Erro ao atualizar assignees da tarefa:', assigneesError);
+                }
+              }
+            }
           } else {
             // Criar nova tarefa
             const insertPayload = {
@@ -737,14 +952,29 @@ export const useProjects = () => {
               title: task.title,
               description: task.description,
               priority: task.priority,
-              assigned_to: task.assignedTo && task.assignedTo !== '' ? task.assignedTo : null,
+              assigned_to: firstAssignee,
               due_date: task.dueDate ? new Date(typeof task.dueDate === 'string' ? task.dueDate + 'T00:00:00' : task.dueDate).toISOString() : null,
               start_date: task.startDate ? new Date(typeof task.startDate === 'string' ? task.startDate + 'T00:00:00' : task.startDate).toISOString() : null,
               parent_task_id: task.parentTaskId && task.parentTaskId !== '' ? task.parentTaskId : null,
               requires_approval: task.requiresApproval,
               created_by: user?.id
             };
-            await supabase.from('tasks').insert(insertPayload);
+            const { data: newTask } = await supabase.from('tasks').insert(insertPayload).select().single();
+            
+            // Inserir múltiplos assignees na tabela task_assignees para novas tarefas
+            if (newTask && assigneeIds.length > 0) {
+              const assigneesPayload = assigneeIds.map((userId: string) => ({
+                task_id: newTask.id,
+                user_id: userId
+              }));
+              const { error: assigneesError } = await supabase
+                .from('task_assignees')
+                .insert(assigneesPayload);
+              
+              if (assigneesError) {
+                console.error('Erro ao atribuir usuários à tarefa:', assigneesError);
+              }
+            }
             }
         }
         // Remover tarefas excluídas
@@ -785,10 +1015,110 @@ export const useProjects = () => {
     }
   };
 
+  const closeProject = async (projectId: string) => {
+    try {
+      setProjectsError(undefined);
+
+      // Buscar etapas do projeto
+      const { data: stagesData, error: stagesError } = await supabase
+        .from('stages')
+        .select('id')
+        .eq('project_id', projectId);
+
+      if (stagesError) {
+        console.error('Erro ao buscar etapas para encerrar projeto:', stagesError);
+        setProjectsError('Erro ao encerrar projeto.');
+        return false;
+      }
+
+      const stageIds = (stagesData || []).map((s: any) => s.id);
+
+      // Fechar tarefas (marcar como completed) das etapas do projeto
+      if (stageIds.length > 0) {
+        const nowIso = new Date().toISOString();
+        const { error: tasksError } = await supabase
+          .from('tasks')
+          .update({ status: 'completed', completed_at: nowIso })
+          .in('stage_id', stageIds)
+          .neq('status', 'completed');
+
+        if (tasksError) {
+          console.error('Erro ao encerrar tarefas do projeto:', tasksError);
+          setProjectsError('Erro ao encerrar tarefas do projeto.');
+          return false;
+        }
+
+        // Marcar etapas como concluídas
+        const { error: stagesUpdateError } = await supabase
+          .from('stages')
+          .update({ status: 'completed' })
+          .eq('project_id', projectId);
+
+        if (stagesUpdateError) {
+          console.error('Erro ao marcar etapas como concluídas:', stagesUpdateError);
+        }
+      }
+
+      // Atualizar status do projeto para 'encerrado'
+      const { error: projectError } = await supabase
+        .from('projects')
+        .update({ status: 'encerrado' })
+        .eq('id', projectId);
+
+      if (projectError) {
+        console.error('Erro ao encerrar projeto:', projectError);
+        setProjectsError('Erro ao encerrar projeto.');
+        return false;
+      }
+
+      await fetchProjects();
+      return true;
+    } catch (error) {
+      console.error('Erro em closeProject:', error);
+      setProjectsError('Erro ao encerrar projeto.');
+      return false;
+    }
+  };
+
   const updateTask = async (taskId: string, updatedData: Partial<Task>) => {
     if (!user) return;
     try {
       const updatePayload: any = { ...updatedData };
+      
+      // Processar assignedTo se foi atualizado
+      if ('assignedTo' in updatePayload) {
+        const assigneeIds = Array.isArray(updatePayload.assignedTo) 
+          ? updatePayload.assignedTo.filter((id: string) => id && id !== '')
+          : (updatePayload.assignedTo && updatePayload.assignedTo !== '' ? [updatePayload.assignedTo] : []);
+        
+        // Manter compatibilidade: assigned_to será o primeiro assignee ou null
+        updatePayload.assigned_to = assigneeIds.length > 0 ? assigneeIds[0] : null;
+        
+        // Atualizar tabela task_assignees
+        // Primeiro, remover todos os assignees existentes
+        await supabase
+          .from('task_assignees')
+          .delete()
+          .eq('task_id', taskId);
+        
+        // Depois, inserir os novos assignees
+        if (assigneeIds.length > 0) {
+          const assigneesPayload = assigneeIds.map((userId: string) => ({
+            task_id: taskId,
+            user_id: userId
+          }));
+          const { error: assigneesError } = await supabase
+            .from('task_assignees')
+            .insert(assigneesPayload);
+          
+          if (assigneesError) {
+            console.error('Erro ao atualizar assignees da tarefa:', assigneesError);
+          }
+        }
+        
+        delete updatePayload.assignedTo;
+      }
+      
       if (updatePayload.dueDate) {
         updatePayload.due_date = toTimestampUTC(updatePayload.dueDate);
         delete updatePayload.dueDate;
@@ -797,13 +1127,13 @@ export const useProjects = () => {
         updatePayload.start_date = toDateYYYYMMDD(updatePayload.startDate);
         delete updatePayload.startDate;
       }
+      
       const { error } = await supabase
         .from('tasks')
         .update(updatePayload)
         .eq('id', taskId);
       if (error) {
         console.error('Erro ao atualizar tarefa:', error);
-      } else {
       }
 
       await fetchProjects();
@@ -898,11 +1228,110 @@ export const useProjects = () => {
   };
 
   const deleteUser = async (userId: string) => {
+    if (!user) {
+      throw new Error('Usuário não autenticado');
+    }
+    
+    // Verificar se o usuário atual é admin
+    const currentUserRoles = user.roles || [];
+    if (!currentUserRoles.includes('admin')) {
+      throw new Error('Apenas administradores podem excluir usuários');
+    }
+    
+    // Não permitir que o usuário exclua a si mesmo
+    if (userId === user.id) {
+      throw new Error('Você não pode excluir seu próprio usuário');
+    }
+    
     try {
-      const { error } = await supabase.from('users').delete().eq('id', userId);
-      if (error) throw error;
+      // Primeiro, excluir registros relacionados que podem ter constraints sem ON DELETE
+      // Excluir task_assignees relacionados
+      const { error: errorAssignees } = await supabase
+        .from('task_assignees')
+        .delete()
+        .eq('user_id', userId);
+      if (errorAssignees) {
+        console.error('Erro ao excluir task_assignees:', errorAssignees);
+        throw new Error('Erro ao excluir atribuições de tarefas: ' + errorAssignees.message);
+      }
+      
+      // Excluir comentários do usuário
+      const { error: errorComments } = await supabase
+        .from('task_comments')
+        .delete()
+        .eq('author_id', userId);
+      if (errorComments) {
+        console.error('Erro ao excluir comentários:', errorComments);
+        throw new Error('Erro ao excluir comentários: ' + errorComments.message);
+      }
+      
+      // Excluir menções em comentários
+      const { error: errorMentions } = await supabase
+        .from('task_comment_mentions')
+        .delete()
+        .eq('user_id', userId);
+      if (errorMentions) {
+        console.error('Erro ao excluir menções:', errorMentions);
+        // Não é crítico, continuar
+      }
+      
+      // Excluir leituras de comentários
+      const { error: errorReads } = await supabase
+        .from('comment_reads')
+        .delete()
+        .eq('user_id', userId);
+      if (errorReads) {
+        console.error('Erro ao excluir leituras:', errorReads);
+        // Não é crítico, continuar
+      }
+      
+      // Excluir histórico de status do usuário
+      const { error: errorHistory } = await supabase
+        .from('task_status_history')
+        .delete()
+        .eq('user_id', userId);
+      if (errorHistory) {
+        console.error('Erro ao excluir histórico:', errorHistory);
+        throw new Error('Erro ao excluir histórico: ' + errorHistory.message);
+      }
+      
+      // Excluir participantes de divulgação
+      const { error: errorDivulgacao } = await supabase
+        .from('divulgacao_participantes')
+        .delete()
+        .eq('user_id', userId);
+      if (errorDivulgacao) {
+        console.error('Erro ao excluir participantes:', errorDivulgacao);
+        // Não é crítico, continuar
+      }
+      
+      // Excluir responsáveis de etapas de divulgação
+      const { error: errorEtapaResp } = await supabase
+        .from('divulgacao_etapa_responsaveis')
+        .delete()
+        .eq('user_id', userId);
+      if (errorEtapaResp) {
+        console.error('Erro ao excluir responsáveis:', errorEtapaResp);
+        // Não é crítico, continuar
+      }
+      
+      // As notificações têm ON DELETE CASCADE, então serão excluídas automaticamente
+      // As tarefas têm ON DELETE SET NULL, então não precisamos fazer nada
+      // Os projetos têm ON DELETE SET NULL, então não precisamos fazer nada
+      
+      // Excluir o usuário da tabela users
+      const { error } = await supabase
+        .from('users')
+        .delete()
+        .eq('id', userId);
+      
+      if (error) {
+        console.error('Erro ao excluir usuário:', error);
+        throw new Error('Erro ao excluir usuário: ' + error.message);
+      }
+      
       return true;
-    } catch (error) {
+    } catch (error: any) {
       console.error('Erro ao excluir usuário:', error);
       throw error;
     }
@@ -927,22 +1356,29 @@ export const useProjects = () => {
     }
   };
 
-  const getUserProjects = () => {
+  const getUserProjects = useCallback(() => {
     if (!user) return [];
     if (user.roles.includes('admin') || user.roles.includes('manager')) return projects;
     // Projetos onde o usuário tem tarefas OU é o criador
     return projects.filter(project => {
       if (project.createdBy === user.id) return true;
       return project.stages.some(stage =>
-        stage.tasks.some(task => task.assignedTo === user.id)
+        stage.tasks.some(task => {
+          // Verificar se o usuário está nos responsáveis (pode ser string ou array)
+          const assigneeIds = Array.isArray(task.assignedTo) 
+            ? task.assignedTo 
+            : (task.assignedTo ? [task.assignedTo] : []);
+          return assigneeIds.includes(user.id);
+        })
     );
     });
-  };
+  }, [user, projects]);
 
   return {
     projects,
     isLoading,
     projectsError,
+    closeProject,
     getUserTasks,
     getTasksForApproval,
     approveTask,

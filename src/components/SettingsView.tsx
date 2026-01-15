@@ -60,9 +60,14 @@ const SettingsView: React.FC = () => {
   };
   const handleDeleteUser = async () => {
     if (confirmDeleteUser) {
-      await deleteUser(confirmDeleteUser.id);
-      setConfirmDeleteUser(null);
-      await loadUsers();
+      try {
+        await deleteUser(confirmDeleteUser.id);
+        setConfirmDeleteUser(null);
+        await loadUsers();
+      } catch (error: any) {
+        console.error('Erro ao excluir usuário:', error);
+        alert('Erro ao excluir usuário: ' + (error.message || 'Não foi possível excluir o usuário. Verifique se você tem permissão.'));
+      }
     }
   };
 

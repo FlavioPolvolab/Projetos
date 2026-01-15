@@ -96,26 +96,26 @@ const Dashboard: React.FC = () => {
   const getGanttTasks = () => {
     try {
       let filteredProjects = projects || [];
-      if (selectedGanttProject !== 'all') {
+    if (selectedGanttProject !== 'all') {
         filteredProjects = filteredProjects.filter(p => String(p.id) === selectedGanttProject);
-      }
-      const tasks: any[] = [];
-      // Mapa de títulos de tarefas para lookup rápido
-      const taskTitles = new Map<string, string>();
-      filteredProjects.forEach(project => {
+    }
+    const tasks: any[] = [];
+    // Mapa de títulos de tarefas para lookup rápido
+    const taskTitles = new Map<string, string>();
+    filteredProjects.forEach(project => {
         if (!project || !project.stages) return;
-        project.stages.forEach(stage => {
+      project.stages.forEach(stage => {
           if (!stage || !stage.tasks) return;
-          stage.tasks.forEach(task => {
+        stage.tasks.forEach(task => {
             if (task && task.id && task.title) {
-              taskTitles.set(task.id, task.title);
+          taskTitles.set(task.id, task.title);
             }
-          });
         });
       });
-      filteredProjects.forEach(project => {
+    });
+    filteredProjects.forEach(project => {
         if (!project) return;
-        // Projeto como grupo
+      // Projeto como grupo
         const dueDates = (project.stages || []).flatMap(s => {
           if (!s || !s.tasks) return [];
           return s.tasks
@@ -127,62 +127,62 @@ const Dashboard: React.FC = () => {
         
         // Validação final antes de adicionar
         if (!isNaN(projectStart.getTime()) && !isNaN(projectEnd.getTime())) {
-          tasks.push({
-            id: project.id,
+      tasks.push({
+        id: project.id,
             name: project.name || 'Projeto sem nome',
             start: projectStart,
             end: projectEnd,
             startLabel: format(projectStart, 'dd-MM-yy'),
             endLabel: format(projectEnd, 'dd-MM-yy'),
-            type: 'project',
-            progress: 0,
-            isDisabled: true,
+        type: 'project',
+        progress: 0,
+        isDisabled: true,
             hideChildren: collapsedProjects.includes(String(project.id)),
-            styles: { progressColor: '#2563eb', progressSelectedColor: '#1d4ed8' }
-          });
+        styles: { progressColor: '#2563eb', progressSelectedColor: '#1d4ed8' }
+      });
         }
         
-        // Tarefas
+      // Tarefas
         (project.stages || []).forEach(stage => {
           if (!stage || !stage.tasks) return;
-          stage.tasks.forEach(task => {
+        stage.tasks.forEach(task => {
             if (!task) return;
             // Validação mais rigorosa
-            if (!task.startDate || !task.dueDate) return;
+          if (!task.startDate || !task.dueDate) return;
             
-            const start = new Date(task.startDate);
-            const end = new Date(task.dueDate);
+          const start = new Date(task.startDate);
+          const end = new Date(task.dueDate);
             
             // Validação de datas válidas
-            if (isNaN(start.getTime()) || isNaN(end.getTime())) return;
+          if (isNaN(start.getTime()) || isNaN(end.getTime())) return;
             
             // Garantir que start <= end
             if (start > end) return;
             
             // Validação final antes de adicionar
             if (task.id && task.title) {
-              tasks.push({
-                id: task.id,
-                name: task.title,
+          tasks.push({
+            id: task.id,
+            name: task.title,
                 start: start,
                 end: end,
                 startLabel: format(start, 'dd-MM-yy'),
                 endLabel: format(end, 'dd-MM-yy'),
-                type: 'task',
-                project: project.id,
-                progress: task.status === 'completed' ? 100 : 0,
-                parentTaskTitle: task.parentTaskId ? taskTitles.get(task.parentTaskId) || '' : undefined,
-                parentTaskId: task.parentTaskId || undefined,
-                styles: {
-                  progressColor: task.status === 'completed' ? '#22c55e' : (task.status === 'in-progress' ? '#2563eb' : '#facc15'),
-                  progressSelectedColor: task.status === 'completed' ? '#16a34a' : (task.status === 'in-progress' ? '#1d4ed8' : '#ca8a04')
+            type: 'task',
+            project: project.id,
+            progress: task.status === 'completed' ? 100 : 0,
+            parentTaskTitle: task.parentTaskId ? taskTitles.get(task.parentTaskId) || '' : undefined,
+            parentTaskId: task.parentTaskId || undefined,
+            styles: {
+              progressColor: task.status === 'completed' ? '#22c55e' : (task.status === 'in-progress' ? '#2563eb' : '#facc15'),
+              progressSelectedColor: task.status === 'completed' ? '#16a34a' : (task.status === 'in-progress' ? '#1d4ed8' : '#ca8a04')
                 }
               });
             }
-          });
         });
       });
-      return tasks;
+    });
+    return tasks;
     } catch (error) {
       console.error('Erro ao gerar tarefas do Gantt:', error);
       return [];
@@ -215,7 +215,10 @@ const Dashboard: React.FC = () => {
   const userId = user?.id;
   const topActiveProjects = projects
     .filter(p => p.status === 'in-progress')
-    .filter(p => isAdminOrManager || p.stages.some(stage => stage.tasks.some(task => task.assignedTo === userId)))
+    .filter(p => isAdminOrManager || (userId && p.stages.some(stage => stage.tasks.some(task => {
+      const assigneeIds = Array.isArray(task.assignedTo) ? task.assignedTo : (task.assignedTo ? [task.assignedTo] : []);
+      return assigneeIds.includes(userId);
+    }))))
     .sort((a, b) => {
       const pa = priorityValue(a.priority);
       const pb = priorityValue(b.priority);
@@ -390,10 +393,11 @@ const Dashboard: React.FC = () => {
                     project.priority === 'high' ? 'Alta' :
                     project.priority === 'critical' ? 'Crítica' : project.priority
                   }</span>
-                  <span className={`ml-2 px-2 py-0.5 rounded text-xs font-semibold ${project.status === 'planning' ? 'bg-blue-100 text-blue-800' : project.status === 'in-progress' ? 'bg-yellow-100 text-yellow-800' : project.status === 'completed' ? 'bg-green-100 text-green-800' : project.status === 'on-hold' ? 'bg-red-100 text-red-800' : 'bg-gray-100 text-gray-800'}`}> {
+                  <span className={`ml-2 px-2 py-0.5 rounded text-xs font-semibold ${project.status === 'planning' ? 'bg-blue-100 text-blue-800' : project.status === 'in-progress' ? 'bg-yellow-100 text-yellow-800' : project.status === 'completed' ? 'bg-green-100 text-green-800' : project.status === 'encerrado' ? 'bg-gray-100 text-gray-800' : project.status === 'on-hold' ? 'bg-red-100 text-red-800' : 'bg-gray-100 text-gray-800'}`}> {
                     project.status === 'planning' ? 'Planejamento' :
                     project.status === 'in-progress' ? 'Em Andamento' :
                     project.status === 'completed' ? 'Concluído' :
+                    project.status === 'encerrado' ? 'Encerrado' :
                     project.status === 'on-hold' ? 'Pausado' : project.status
                   }</span>
                   {(() => { const s = getDeadlineStatus(project); return <span className={`ml-2 px-2 py-0.5 rounded text-xs font-semibold ${s.color}`}>{s.label}</span>; })()}
@@ -511,31 +515,31 @@ const Dashboard: React.FC = () => {
               }
               
               return (
-                <Gantt
+          <Gantt
                   tasks={validTasks}
-                  viewMode={viewMode}
-                  listCellWidth={window.innerWidth < 640 ? "90px" : window.innerWidth < 1024 ? "120px" : "155px"}
-                  locale="pt-BR"
-                  barFill={60}
+            viewMode={viewMode}
+              listCellWidth={window.innerWidth < 640 ? "90px" : window.innerWidth < 1024 ? "120px" : "155px"}
+            locale="pt-BR"
+            barFill={60}
                   fontSize={14 as any}
-                  rowHeight={38}
-                  columnWidth={
-                    viewMode === ViewMode.Day ? (window.innerWidth < 640 ? 40 : 80) :
-                    viewMode === ViewMode.Week ? (window.innerWidth < 640 ? 30 : 60) :
-                    viewMode === ViewMode.Month ? (window.innerWidth < 640 ? 40 : 80) :
-                    viewMode === ViewMode.Year ? (window.innerWidth < 640 ? 60 : 100) : 60
-                  }
-                  todayColor="#2563eb22"
-                  onExpanderClick={task => {
+            rowHeight={38}
+            columnWidth={
+                viewMode === ViewMode.Day ? (window.innerWidth < 640 ? 40 : 80) :
+                viewMode === ViewMode.Week ? (window.innerWidth < 640 ? 30 : 60) :
+                viewMode === ViewMode.Month ? (window.innerWidth < 640 ? 40 : 80) :
+                viewMode === ViewMode.Year ? (window.innerWidth < 640 ? 60 : 100) : 60
+            }
+            todayColor="#2563eb22"
+              onExpanderClick={task => {
                     if (task && task.type === 'project') {
-                      setCollapsedProjects(prev =>
-                        prev.includes(task.id)
-                          ? prev.filter(id => id !== task.id)
-                          : [...prev, task.id]
-                      );
-                    }
-                  }}
-                />
+                  setCollapsedProjects(prev =>
+                    prev.includes(task.id)
+                      ? prev.filter(id => id !== task.id)
+                      : [...prev, task.id]
+                  );
+                }
+              }}
+          />
               );
             } catch (error) {
               console.error('Erro ao renderizar Gantt:', error);
@@ -623,7 +627,7 @@ const Dashboard: React.FC = () => {
                           <button
                             onClick={async () => {
                               await updateTaskStatus(task.id, 'in-progress');
-                              await fetchProjects();
+                              // updateTaskStatus já faz fetchProjects internamente
                             }}
                             className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors text-sm font-medium shadow-sm flex items-center gap-2"
                             title="Iniciar tarefa"
@@ -636,7 +640,7 @@ const Dashboard: React.FC = () => {
                           <button
                             onClick={async () => {
                               await updateTaskStatus(task.id, 'completed');
-                              await fetchProjects();
+                              // updateTaskStatus já faz fetchProjects internamente
                             }}
                             className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors text-sm font-medium shadow-sm flex items-center gap-2"
                             title="Concluir tarefa"
@@ -649,7 +653,7 @@ const Dashboard: React.FC = () => {
                           <button
                             onClick={async () => {
                               await updateTaskStatus(task.id, 'completed');
-                              await fetchProjects();
+                              // updateTaskStatus já faz fetchProjects internamente
                             }}
                             className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors text-sm font-medium shadow-sm flex items-center gap-2"
                             title="Concluir tarefa"

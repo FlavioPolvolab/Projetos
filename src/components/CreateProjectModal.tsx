@@ -3,6 +3,7 @@ import { X, Plus, Trash2, Users } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import { supabase } from '../lib/supabase';
 import { getInputDateValue } from '../lib/formatDate';
+import { Project } from '../types';
 
 interface CreateProjectModalProps {
   isOpen: boolean;
@@ -10,6 +11,7 @@ interface CreateProjectModalProps {
   onCreateProject: (projectData: any) => void;
   users: Array<{ id: string; name: string; email: string; roles: string[] }>;
   editingProject?: Project | null;
+  onCloseProject?: (projectId: string) => Promise<void>;
 }
 
 const CreateProjectModal: React.FC<CreateProjectModalProps> = ({
@@ -17,7 +19,8 @@ const CreateProjectModal: React.FC<CreateProjectModalProps> = ({
   onClose,
   onCreateProject,
   users,
-  editingProject
+  editingProject,
+  onCloseProject
 }) => {
   const { user } = useAuth();
   const [formData, setFormData] = useState({
@@ -36,6 +39,7 @@ const CreateProjectModal: React.FC<CreateProjectModalProps> = ({
   const [error, setError] = useState<string | null>(null);
   const [taskDateErrors, setTaskDateErrors] = useState<Array<{stageIndex: number, taskIndex: number, field: 'startDate' | 'dueDate'}>>([]);
   const [isEditing, setIsEditing] = useState(false);
+  const [isClosing, setIsClosing] = useState(false);
 
   useEffect(() => {
     if (editingProject && isOpen) {
@@ -470,14 +474,66 @@ const CreateProjectModal: React.FC<CreateProjectModalProps> = ({
                           />
                         </div>
                         <div>
+                          <label className="block text-xs font-medium text-gray-700 mb-1">
+                            Responsáveis
+                          </label>
+                          
+                          {/* Chips dos usuários selecionados */}
+                          {(() => {
+                            const assignedIds = Array.isArray(task.assignedTo) ? task.assignedTo : (task.assignedTo ? [task.assignedTo] : []);
+                            return assignedIds.length > 0 && (
+                              <div className="flex flex-wrap gap-1 mb-2">
+                                {assignedIds.map((userId: string) => {
+                                  const user = users.find(u => u.id === userId);
+                                  if (!user) return null;
+                                  return (
+                                    <span
+                                      key={userId}
+                                      className="inline-flex items-center gap-1 px-2 py-0.5 bg-blue-100 text-blue-800 rounded-full text-xs"
+                                    >
+                                      {user.name}
+                                      {!(editingProject && !isEditing) && (
+                                        <button
+                                          type="button"
+                                          onClick={() => {
+                                            const newAssignees = assignedIds.filter((id: string) => id !== userId);
+                                            updateTask(stageIndex, taskIndex, 'assignedTo', newAssignees);
+                                          }}
+                                          className="ml-0.5 text-blue-600 hover:text-blue-800 font-bold text-sm"
+                                        >
+                                          ×
+                                        </button>
+                                      )}
+                                    </span>
+                                  );
+                                })}
+                              </div>
+                            );
+                          })()}
+                          
+                          {/* Select para adicionar usuário */}
                           <select
-                            value={task.assignedTo}
-                              onChange={e => updateTask(stageIndex, taskIndex, 'assignedTo', e.target.value)}
+                            value=""
+                            onChange={(e) => {
+                              const selectedUserId = e.target.value;
+                              if (selectedUserId) {
+                                const currentAssignees = Array.isArray(task.assignedTo) ? task.assignedTo : (task.assignedTo ? [task.assignedTo] : []);
+                                if (!currentAssignees.includes(selectedUserId)) {
+                                  updateTask(stageIndex, taskIndex, 'assignedTo', [...currentAssignees, selectedUserId]);
+                                }
+                                e.target.value = ''; // Reset select
+                              }
+                            }}
                             className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                             disabled={editingProject && !isEditing}
                           >
-                              <option value="">Atribuir</option>
-                            {users.map(user => (
+                            <option value="">Adicionar responsável...</option>
+                            {users
+                              .filter(user => {
+                                const assignedIds = Array.isArray(task.assignedTo) ? task.assignedTo : (task.assignedTo ? [task.assignedTo] : []);
+                                return !assignedIds.includes(user.id);
+                              })
+                              .map(user => (
                                 <option key={user.id} value={user.id}>{user.name}</option>
                             ))}
                           </select>
@@ -565,7 +621,34 @@ const CreateProjectModal: React.FC<CreateProjectModalProps> = ({
           </div>
 
           {/* Submit Buttons */}
-          <div className="flex items-center justify-end space-x-4 pt-6 border-t border-gray-200">
+          <div className="flex items-center justify-between flex-wrap gap-3 pt-6 border-t border-gray-200">
+            {editingProject && (
+              <button
+                type="button"
+                onClick={async () => {
+                  if (!editingProject || !onCloseProject || isClosing) return;
+                  const confirmed = window.confirm('Encerrar o projeto e concluir todas as tarefas dele?');
+                  if (!confirmed) return;
+                  setIsClosing(true);
+                  await onCloseProject(editingProject.id);
+                  setIsClosing(false);
+                  onClose();
+                }}
+                disabled={isClosing || editingProject.status === 'completed' || editingProject.status === 'encerrado'}
+                className={`px-6 py-3 rounded-lg font-medium border transition-colors ${
+                  editingProject.status === 'completed' || editingProject.status === 'encerrado'
+                    ? 'border-gray-300 text-gray-400 cursor-not-allowed'
+                    : 'border-red-200 text-red-700 hover:bg-red-50'
+                }`}
+              >
+                {editingProject.status === 'completed' || editingProject.status === 'encerrado'
+                  ? editingProject.status === 'encerrado' ? 'Projeto já encerrado' : 'Projeto já concluído'
+                  : isClosing
+                    ? 'Encerrando...'
+                    : 'Encerrar Projeto'}
+              </button>
+            )}
+            <div className="flex items-center gap-3 ml-auto">
             <button
               type="button"
               onClick={onClose}
@@ -579,6 +662,7 @@ const CreateProjectModal: React.FC<CreateProjectModalProps> = ({
             >
                 {editingProject ? 'Salvar Alterações' : 'Criar Projeto'}
             </button>
+            </div>
           </div>
         </form>
         </div>

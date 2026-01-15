@@ -479,7 +479,7 @@ export interface Database {
         | "task_rejected"
         | "task_transferred"
       priority_level: "low" | "medium" | "high" | "critical"
-      project_status: "planning" | "in-progress" | "completed" | "on-hold"
+      project_status: "planning" | "in-progress" | "completed" | "on-hold" | "encerrado"
       task_status:
         | "pending"
         | "in-progress"

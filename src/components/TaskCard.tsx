@@ -137,7 +137,13 @@ const TaskCard: React.FC<any> = (props) => {
   };
 
   const canChangeStatus = () => {
-    return task.assignedTo === user?.id && (task.status === 'pending' || task.status === 'in-progress' || task.status === 'approved');
+    // Admin e gerente podem mudar status de qualquer tarefa
+    if (user?.roles.includes('admin') || user?.roles.includes('manager')) {
+      return task.status === 'pending' || task.status === 'in-progress' || task.status === 'approved';
+    }
+    // Usuários regulares só podem mudar status de tarefas atribuídas a eles
+    const assignedToIds = Array.isArray(task.assignedTo) ? task.assignedTo : (task.assignedTo ? [task.assignedTo] : []);
+    return assignedToIds.includes(user?.id || '') && (task.status === 'pending' || task.status === 'in-progress' || task.status === 'approved');
   };
 
   const canTransfer = () => {
@@ -154,7 +160,7 @@ const TaskCard: React.FC<any> = (props) => {
   const handleSendForApproval = async (e?: React.MouseEvent) => {
     if (e) e.stopPropagation();
     await sendTaskForApproval(task.id);
-    await fetchProjects();
+    // fetchProjects será chamado automaticamente pela função updateTaskStatus
   };
 
   const handleAddComment = () => {
@@ -192,8 +198,10 @@ const TaskCard: React.FC<any> = (props) => {
 
   const handleStatusChange = async (status: Task['status']) => {
     await updateTaskStatus(task.id, status, (msg) => setBlockedMsg(msg));
-    // Log e notificação
-    if (task.assignedTo) {
+    // Log e notificação para todos os assignees
+    const assigneeIds = Array.isArray(task.assignedTo) ? task.assignedTo : (task.assignedTo ? [task.assignedTo] : []);
+    for (const assigneeId of assigneeIds) {
+      if (assigneeId) {
       await addNotification({
         type: 'task_assigned',
         title: 'Tarefa atribuída/atualizada',
@@ -202,7 +210,8 @@ const TaskCard: React.FC<any> = (props) => {
         projectName: task.projectName || '',
         priority: task.priority || 'medium',
         read: false
-      }, task.assignedTo);
+        }, assigneeId);
+      }
     }
     // Se não bloqueou, pode chamar onStatusChange normalmente
     // (Opcional: só chamar se não houve bloqueio)

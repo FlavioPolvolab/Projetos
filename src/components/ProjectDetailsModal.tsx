@@ -1,6 +1,7 @@
 import React from 'react';
 import { formatDateToLocal } from '../lib/formatDate';
 import TaskDetailsModal from './TaskDetailsModal';
+import { useProjectsContext } from '../contexts/ProjectsContext';
 
 interface ProjectDetailsModalProps {
   isOpen: boolean;
@@ -14,6 +15,7 @@ const getStatusLabel = (status: string) => {
     case 'planning': return 'Planejamento';
     case 'in-progress': return 'Em Andamento';
     case 'completed': return 'Concluído';
+    case 'encerrado': return 'Encerrado';
     case 'on-hold': return 'Pausado';
     default: return status;
   }
@@ -50,16 +52,50 @@ const getDeadlineStatus = (project: any) => {
 };
 
 const ProjectDetailsModal: React.FC<ProjectDetailsModalProps> = ({ isOpen, project, onClose, users }) => {
+  const { projects, fetchProjects } = useProjectsContext();
   const [showTaskModal, setShowTaskModal] = React.useState(false);
   const [modalTask, setModalTask] = React.useState<any>(null);
   const [sort, setSort] = React.useState<{ field: 'dueDate' | 'stageName', direction: 'asc' | 'desc' }>({ field: 'dueDate', direction: 'asc' });
   const [statusFilter, setStatusFilter] = React.useState<string>('all');
+  const [currentProject, setCurrentProject] = React.useState<any>(project);
 
-  if (!isOpen || !project) return null;
+  // Atualizar o projeto quando o prop mudar ou quando os projetos do contexto forem atualizados
+  React.useEffect(() => {
+    if (isOpen && project) {
+      setCurrentProject(project);
+    }
+  }, [isOpen, project]);
+
+  // Buscar projeto atualizado quando os projetos do contexto mudarem
+  React.useEffect(() => {
+    if (isOpen && currentProject?.id && projects) {
+      const updatedProject = projects.find((p: any) => p.id === currentProject.id);
+      if (updatedProject) {
+        setCurrentProject(updatedProject);
+      }
+    }
+  }, [projects, isOpen]);
+
+  if (!isOpen || !currentProject) return null;
 
   // Junta todas as tarefas do projeto em um array único
-  const allTasksUnfiltered = (project.stages || []).flatMap((stage: any) =>
-    (stage.tasks || []).map((task: any) => ({ ...task, stageName: stage.name, responsible: users?.find(u => u.id === task.assignedTo) }))
+  const allTasksUnfiltered = (currentProject.stages || []).flatMap((stage: any) =>
+    (stage.tasks || []).map((task: any) => {
+      // Processar múltiplos responsáveis
+      const assigneeIds = Array.isArray(task.assignedTo) 
+        ? task.assignedTo 
+        : (task.assignedTo ? [task.assignedTo] : []);
+      const responsibles = assigneeIds
+        .map((id: string) => users?.find(u => u.id === id))
+        .filter(Boolean);
+      
+      return { 
+        ...task, 
+        stageName: stage.name, 
+        responsible: responsibles.length === 1 ? responsibles[0] : null,
+        responsibles: responsibles.length > 1 ? responsibles : undefined
+      };
+    })
   );
   
   // Filtro por status
@@ -91,15 +127,15 @@ const ProjectDetailsModal: React.FC<ProjectDetailsModalProps> = ({ isOpen, proje
           <span className="text-2xl">&times;</span>
         </button>
         <div className="overflow-y-auto flex-1 pr-2">
-          <h2 className="text-2xl font-bold mb-2">{project.name}</h2>
+          <h2 className="text-2xl font-bold mb-2">{currentProject.name}</h2>
           <div className="flex gap-2 mb-4">
-            <span className={`px-3 py-1 rounded-full text-xs font-medium ${project.status === 'planning' ? 'bg-blue-100 text-blue-800' : project.status === 'in-progress' ? 'bg-yellow-100 text-yellow-800' : project.status === 'completed' ? 'bg-green-100 text-green-800' : project.status === 'on-hold' ? 'bg-red-100 text-red-800' : 'bg-gray-100 text-gray-800'}`}>{getStatusLabel(project.status)}</span>
-            <span className={`px-3 py-1 rounded-full text-xs font-medium ${project.priority === 'low' ? 'bg-green-100 text-green-800' : project.priority === 'medium' ? 'bg-blue-100 text-blue-800' : project.priority === 'high' ? 'bg-orange-100 text-orange-800' : project.priority === 'critical' ? 'bg-red-100 text-red-800' : 'bg-gray-100 text-gray-800'}`}>{getPriorityLabel(project.priority)}</span>
-            {(() => { const s = getDeadlineStatus(project); return <span className={`px-3 py-1 rounded-full text-xs font-medium ${s.color}`}>{s.label}</span>; })()}
+            <span className={`px-3 py-1 rounded-full text-xs font-medium ${currentProject.status === 'planning' ? 'bg-blue-100 text-blue-800' : currentProject.status === 'in-progress' ? 'bg-yellow-100 text-yellow-800' : currentProject.status === 'completed' ? 'bg-green-100 text-green-800' : currentProject.status === 'encerrado' ? 'bg-gray-100 text-gray-800' : currentProject.status === 'on-hold' ? 'bg-red-100 text-red-800' : 'bg-gray-100 text-gray-800'}`}>{getStatusLabel(currentProject.status)}</span>
+            <span className={`px-3 py-1 rounded-full text-xs font-medium ${currentProject.priority === 'low' ? 'bg-green-100 text-green-800' : currentProject.priority === 'medium' ? 'bg-blue-100 text-blue-800' : currentProject.priority === 'high' ? 'bg-orange-100 text-orange-800' : currentProject.priority === 'critical' ? 'bg-red-100 text-red-800' : 'bg-gray-100 text-gray-800'}`}>{getPriorityLabel(currentProject.priority)}</span>
+            {(() => { const s = getDeadlineStatus(currentProject); return <span className={`px-3 py-1 rounded-full text-xs font-medium ${s.color}`}>{s.label}</span>; })()}
           </div>
           <div className="mb-4">
             <h3 className="text-md font-semibold text-gray-700 mb-1">Descrição</h3>
-            <p className="text-gray-800 text-sm">{project.description}</p>
+            <p className="text-gray-800 text-sm">{currentProject.description}</p>
           </div>
           <div>
             <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 mb-3">
@@ -132,6 +168,7 @@ const ProjectDetailsModal: React.FC<ProjectDetailsModalProps> = ({ isOpen, proje
                 <thead>
                   <tr className="text-left text-gray-700">
                     <th className="px-2 py-1">Título</th>
+                    <th className="px-2 py-1">Responsáveis</th>
                     <th
                       className="px-2 py-1 cursor-pointer select-none hover:underline"
                       onClick={() => setSort(s => ({ field: 'dueDate', direction: s.field === 'dueDate' && s.direction === 'asc' ? 'desc' : 'asc' }))}
@@ -162,9 +199,27 @@ const ProjectDetailsModal: React.FC<ProjectDetailsModalProps> = ({ isOpen, proje
                         >
                       <td className="px-2 py-1 underline text-blue-700 max-w-[400px] truncate">
                         {task.title}
+                      </td>
+                      <td className="px-2 py-1">
+                        <div className="flex flex-wrap gap-1">
                         {task.responsible && (
-                          <span className="ml-2 text-xs text-gray-400 font-normal">({task.responsible.name})</span>
+                            <span className="inline-block px-2 py-0.5 bg-blue-100 text-blue-800 rounded-full text-xs">
+                              {task.responsible.name}
+                            </span>
+                          )}
+                          {task.responsibles && task.responsibles.length > 0 && (
+                            <>
+                              {task.responsibles.map((r: any, idx: number) => (
+                                <span key={idx} className="inline-block px-2 py-0.5 bg-blue-100 text-blue-800 rounded-full text-xs">
+                                  {r.name}
+                                </span>
+                              ))}
+                            </>
+                          )}
+                          {!task.responsible && (!task.responsibles || task.responsibles.length === 0) && (
+                            <span className="text-gray-400 text-xs">-</span>
                         )}
+                        </div>
                       </td>
                       <td className="px-2 py-1 text-gray-500">{task.dueDate ? formatDateToLocal(task.dueDate) : '-'}</td>
                       <td className="px-2 py-1">
@@ -179,7 +234,7 @@ const ProjectDetailsModal: React.FC<ProjectDetailsModalProps> = ({ isOpen, proje
                     </tr>
                       ))}
                   {allTasks.length === 0 && (
-                    <tr><td colSpan={4} className="text-gray-400 italic text-center py-4">Nenhuma tarefa encontrada.</td></tr>
+                    <tr><td colSpan={5} className="text-gray-400 italic text-center py-4">Nenhuma tarefa encontrada.</td></tr>
                   )}
                 </tbody>
               </table>
@@ -191,13 +246,15 @@ const ProjectDetailsModal: React.FC<ProjectDetailsModalProps> = ({ isOpen, proje
       {showTaskModal && modalTask && modalTask.id ? (
         <TaskDetailsModal
           isOpen={showTaskModal}
-          onClose={() => {
+          onClose={async () => {
+            // Buscar projetos atualizados antes de fechar
+            // fetchProjects será chamado automaticamente pela função updateTaskStatus
             setShowTaskModal(false);
             setTimeout(() => setModalTask(null), 0);
           }}
           task={modalTask}
           users={users || []}
-          project={project}
+          project={currentProject}
         />
       ) : null}
     </div>
